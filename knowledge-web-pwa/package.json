@@ -1,0 +1,5 @@
+{
+  "private": true,
+  "scripts": {"pwa": "node tools/build-pwa.cjs"},
+  "devDependencies": {"workbox-build": "^7.3.0"}
+}

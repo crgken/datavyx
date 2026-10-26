@@ -1,0 +1,6 @@
+{
+  "AUTH0_DOMAIN": "dev-zto67ad0zoj5nzmb.au.auth0.com",
+  "AUTH0_CLIENT_ID": "YOUR_WEB_SPA_CLIENT_ID",
+  "AUTH0_AUDIENCE": "https://atlasai-knowledge-api",
+  "AUTH0_ORGANIZATION_ID": ""
+}

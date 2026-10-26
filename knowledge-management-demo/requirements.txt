@@ -1,0 +1,11 @@
+graphiti-core==0.30.1
+neo4j==6.3.0
+pydantic==2.13.5
+python-dotenv==1.2.3
+openai==3.35.1
+pydantic-ai-slim[openai]==2.54.0
+Babel==2.18.0
+# Graphiti imports httpx directly; do not rely on the model SDK's transitive dependencies.
+httpx>=0.28,<1
+PyJWT[crypto]==2.15.1
+azure-cognitiveservices-speech==1.53.0

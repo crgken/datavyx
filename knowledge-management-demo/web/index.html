@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Atlas Knowledge · 自然语言知识管理</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+  <script src="/vendor/g6-5.1.1.min.js" defer></script>
+  <script src="/star.js" defer></script>
+  <script src="/review.js" defer></script>
+  <script src="/bulk.js" defer></script>
+  <script src="/pending.js" defer></script>
+</head>
+<body>
+  <header class="app-header">
+    <a class="brand" href="/" aria-label="Atlas Knowledge 首页"><span class="brand-mark">A</span><span>Atlas <b>Knowledge</b><small>自然语言知识管理 · 本地 Demo</small></span></a>
+    <div class="health"><span class="dot" id="health-dot"></span><span id="health">正在连接</span><span class="tag">本地空间</span></div>
+  </header>
+  <div id="error" class="error" role="alert" hidden><span id="error-text"></span><button id="dismiss-error" aria-label="关闭错误提示">关闭</button></div>
+  <main class="workspace">
+    <section class="chat panel" aria-label="知识对话">
+      <div class="panel-heading"><div><span class="eyebrow">记录与提问</span><h1>从一句话开始</h1></div><span class="tag">文字交互</span></div>
+      <p class="intro">输入信息自动保存为待确认，可查询、看星图；确认后正式生效。</p>
+      <div class="examples"><button data-example="甲公司有合同 A，金额 20 万元人民币，审核中。">录入一份合同</button><button data-example="目前记录了多少份合同？">查询合同数量</button></div>
+      <div class="messages" id="messages" role="log" aria-live="polite"><div class="welcome" id="welcome"><span class="welcome-symbol">✧</span><p>先记录，再确认</p><small>每条事实保留来源。模糊表述会被单独标记，不会自动成为精确数据。</small></div></div>
+      <form id="chat-form" class="composer"><label for="message" class="sr-only">描述信息或输入问题</label><textarea id="message" rows="3" maxlength="16000" placeholder="例如：甲公司有合同 A，金额 20 万元人民币，审核中。" required></textarea><div class="composer-bottom"><small id="chat-status" aria-live="polite">Enter 发送 · Shift + Enter 换行</small><button class="primary" id="send" type="submit">发送 <span aria-hidden="true">↑</span></button></div></form>
+    </section>
+    <section class="content" aria-label="预览与结果">
+      <section class="preview panel" id="preview-panel" hidden><div class="panel-heading"><div><span class="eyebrow">保存前请核对</span><h2>待确认预览</h2></div><button id="close-preview" class="quiet">收起</button></div><div id="preview"></div></section>
+      <section class="explorer panel">
+        <div class="tabs" role="tablist" aria-label="知识查看方式"><button id="browse-tab" class="active" role="tab" aria-selected="true" aria-controls="browse-view">对象浏览</button><button id="star-tab" role="tab" aria-selected="false" aria-controls="star-view">星状图</button><button id="stats-tab" role="tab" aria-selected="false" aria-controls="stats-view">统计与复核</button><span class="tab-note">有范围 · 有来源</span></div>
+        <div id="browse-view" role="tabpanel" aria-labelledby="browse-tab"><div class="view-toolbar"><div><h2>探索已记录的知识</h2><p>类型 → 对象 → 属性与关系 → 下一层</p></div><button id="refresh" class="secondary">刷新目录 ↻</button></div><form id="open-object" class="object-search"><label for="object-id">直接打开对象</label><input id="object-id" placeholder="输入对象 ID" maxlength="100"><button type="submit" class="secondary">打开</button></form><div class="browse-controls"><label>最大展开深度 <select id="max-depth"><option>2</option><option selected>4</option><option>6</option><option>8</option></select></label><span id="browse-path" class="breadcrumbs"></span></div><div id="browser"></div><div id="detail"></div><div id="neighbors"></div></div>
+        <div id="star-view" role="tabpanel" aria-labelledby="star-tab" hidden>
+          <div class="view-toolbar"><div><h2>所有对象，一图看清</h2><p>对象自动散开，连线展示关系与方向。点击对象或关系查看详情。</p></div><button id="star-refresh" class="secondary">刷新关系图 ↻</button></div>
+          <div class="graph-toolbar" aria-label="关系图操作"><button id="star-fit" disabled>适配全图</button><button id="star-relayout" disabled>重新布局</button><button id="star-zoom-in" aria-label="放大关系图" disabled>放大 ＋</button><button id="star-zoom-out" aria-label="缩小关系图" disabled>缩小 −</button></div>
+          <div id="star-status" class="scope" role="status" aria-live="polite">打开后加载全部对象与当前关系。</div>
+          <div id="star-legend" class="graph-legend" aria-label="关系图图例"></div>
+          <div id="star-canvas" class="star-canvas" aria-label="全部对象关系图" aria-busy="false"></div>
+          <div id="star-selection" class="star-selection" hidden></div>
+          <details id="star-accessible" class="graph-list" hidden><summary>对象与关系清单（支持键盘选择）</summary><div id="star-relations"></div></details>
+        </div>
+        <div id="stats-view" role="tabpanel" aria-labelledby="stats-tab" hidden><div class="view-toolbar"><div><h2>精确统计，可以复核</h2><p>只计算身份明确、已确认且当前有效的记录。</p></div></div><div id="statistics"><div class="empty"><span class="empty-symbol">∑</span><p>在左侧输入统计问题</p><small>支持数量、清单、分组和求和。结果将附计算条件和排除原因。</small></div></div><div id="audit"></div></div>
+      </section>
+      <footer>当前结果描述数据库中已记录的内容，不代表现实业务已全部录入。</footer>
+    </section>
+  </main>
+</body>
+</html>

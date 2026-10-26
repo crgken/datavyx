@@ -1,0 +1,30 @@
+/*
+!/.gitignore
+!/knowledge-management-demo/
+!/knowledge-web-pwa/
+
+# Live verification reports may contain data copied from the running demo.
+/knowledge-management-demo/docs/
+
+.env
+**/.env
+deploy/knowledge-runtime.env
+graphiti-poc/.env
+reference_project/backend/.env
+reference_project/frontend/.env
+reference_project/backend/test.db
+reference_project/frontend/dist
+reference_project/frontend/node_modules
+reference_project/backend/.venv
+reference_project/backend/__pycache__
+reference_project/backend/app/__pycache__
+reference_project/frontend/.vite
+
+# atlasai-core
+atlasai-core/app/demo.db
+**/__pycache__/
+**/*.pyc
+outputs/client-acquisition/collector/
+outputs/client-acquisition/company-lookups/
+atlasai-core/eval/results_*.json
+graphiti-poc/p0/results_*.json

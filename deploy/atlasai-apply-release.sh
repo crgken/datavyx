@@ -11,6 +11,7 @@ case "$archive" in /home/ubuntu/atlasai-deploy/release-*.zip) ;; *) echo "Releas
 stage=$(mktemp -d /tmp/atlasai-release.XXXXXX)
 trap 'rm -rf -- "$stage"' EXIT
 unzip -q "$archive" -d "$stage"
+chmod -R a+rX -- "$stage"
 
 app=/opt/atlasai-knowledge
 backend="$stage/knowledge-management-demo"

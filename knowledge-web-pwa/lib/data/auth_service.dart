@@ -49,7 +49,11 @@ class AuthService {
       await client.loginWithRedirect(audience: audience, redirectUrl: callback,
         organizationId: organization.isEmpty ? null : organization,
         scopes: {'openid', 'profile', 'email', 'offline_access'},
-        parameters: {'ui_locales': language == 'zh' ? 'zh-CN' : 'en'});
+        parameters: {
+          'ui_locales': language == 'zh' ? 'zh-CN' : 'en',
+          'screen_hint': 'signup',
+          'prompt': 'login',
+        });
       // Callback restores the session in the next document, not this old page.
       await Completer<void>().future;
     } on WebException catch (error) { throw _failure(error); }

@@ -1,7 +1,7 @@
 """Auth0 identity verification and application-owned workspace authorization.
 
 No password, client secret, client-supplied identity or model output grants access.
-This runtime serves one explicitly bound customer workspace.
+Each authenticated user receives an application-owned personal workspace.
 """
 import hashlib
 import os
@@ -17,6 +17,7 @@ ROLES = {
     'viewer': ['read'],
     'editor': ['read', 'propose', 'record_pending'],
     'reviewer': ['read', 'propose', 'record_pending', 'confirm'],
+    'owner': ['read', 'propose', 'record_pending', 'confirm'],
 }
 
 
@@ -56,10 +57,6 @@ class MobileAuth:
         self._lock = threading.Lock()
         self._rates = {}
 
-    @property
-    def workspace_id(self):
-        return os.getenv('KD_MOBILE_TENANT_ID', '')
-
     def configuration(self):
         domain = os.getenv('KD_AUTH0_DOMAIN', '')
         audience = os.getenv('KD_AUTH0_AUDIENCE', '')
@@ -67,7 +64,7 @@ class MobileAuth:
         parsed = urlsplit('https://' + domain)
         require(domain and parsed.hostname == domain and not parsed.port and
                 not parsed.username and not parsed.path and audience and
-                all(c.strip() for c in clients) and self.workspace_id,
+                all(c.strip() for c in clients),
                 'mobile_not_configured', '手机端身份服务尚未配置。', 503)
         return 'https://' + domain + '/', audience, [c.strip() for c in clients]
 
@@ -76,9 +73,12 @@ class MobileAuth:
             if self._schema_ready:
                 return
             with self.store.driver.session(database=self.store.config.database) as session:
-                for label in ('KDMobileMember', 'KDMobileRevokedToken', 'KDMobileAccessAudit'):
+                for label in ('KDMobileMember', 'KDMobileRevokedToken', 'KDMobileAccessAudit',
+                              'KDUser', 'KDWorkspace', 'KDWorkspaceMember', 'KDWorkspaceAccessAudit'):
                     session.run(f'CREATE CONSTRAINT {label.lower()}_id IF NOT EXISTS '
                                 f'FOR (n:{label}) REQUIRE n.id IS UNIQUE').consume()
+                session.run('CREATE CONSTRAINT kdworkspace_dataset IF NOT EXISTS '
+                            'FOR (w:KDWorkspace) REQUIRE w.dataset IS UNIQUE').consume()
             self._schema_ready = True
 
     def rate_limit(self, key, limit, seconds=60):
@@ -138,31 +138,75 @@ class MobileAuth:
         require(not revoked, 'session_expired', '请重新登录。', 401)
         return identity
 
+    def ensure_personal_workspace(self, identity):
+        self.initialize()
+        now = time.time()
+        workspace_id = 'personal:' + identity.actor
+        member_id = digest([workspace_id, identity.actor])
+
+        def provision(tx):
+            tx.run('MERGE (u:KDUser {id:$id}) ON CREATE SET u.issuer=$issuer,u.subject=$subject,u.created_at=$now '
+                   'SET u.last_seen_at=$now', id=identity.actor, issuer=identity.issuer,
+                   subject=identity.subject, now=now).consume()
+            existing = tx.run('MATCH (m:KDWorkspaceMember {actor:$actor,enabled:true}) '
+                              'MATCH (w:KDWorkspace {id:m.workspace_id,status:"active"}) '
+                              'RETURN w.id AS id ORDER BY CASE WHEN w.kind="personal" THEN 0 ELSE 1 END,'
+                              'w.created_at,w.id LIMIT 1', actor=identity.actor).single()
+            if existing:
+                return existing['id']
+            tx.run('MERGE (w:KDWorkspace {id:$id}) ON CREATE SET w.dataset=$dataset,w.kind="personal",'
+                   'w.name="个人空间",w.owner_actor=$actor,w.status="active",w.created_at=$now '
+                   'RETURN w.id AS id', id=workspace_id, dataset=workspace_id,
+                   actor=identity.actor, now=now).consume()
+            tx.run('MERGE (m:KDWorkspaceMember {id:$id}) ON CREATE SET m.workspace_id=$workspace,'
+                   'm.dataset=$dataset,m.actor=$actor,m.role="owner",m.enabled=true,m.created_at=$now '
+                   'SET m.updated_at=$now', id=member_id, workspace=workspace_id,
+                   dataset=workspace_id, actor=identity.actor, now=now).consume()
+            tx.run('MERGE (a:KDWorkspaceAccessAudit {id:$id}) ON CREATE SET a.workspace_id=$workspace,'
+                   'a.actor=$actor,a.action="personal_workspace_created",'
+                   'a.reason="First authenticated login",a.created_at=$now',
+                   id=digest(['workspace-created', member_id]), workspace=workspace_id,
+                   actor=identity.actor, now=now).consume()
+            return workspace_id
+
+        return self.store.write(provision)
+
     def authorize(self, identity, workspace=''):
-        require(not workspace or workspace == self.workspace_id,
-                'permission_denied', '无工作空间访问权限。', 403)
-        mid = digest([identity.issuer, identity.subject, self.workspace_id])
-        row = self.store.read(lambda tx: tx.run(
-            'MATCH (m:KDMobileMember {id:$id,dataset:$d,workspace:$w,enabled:true}) '
-            'RETURN properties(m) AS m', id=mid, d=self.store.dataset,
-            w=self.workspace_id).single())
-        require(row, 'workspace_access_required', '账号尚未获得工作空间访问权限。', 403)
-        member = dict(row['m'])
-        role = member.get('role')
-        require(role in ROLES, 'permission_denied', '成员权限配置无效。', 403)
+        self.initialize()
         expected_org = os.getenv('KD_AUTH0_ORGANIZATION_ID', '')
         require(not expected_org or identity.organization == expected_org,
                 'permission_denied', '组织身份不匹配。', 403)
-        return {'tenant': self.workspace_id, 'actor': identity.actor,
-                'permissions': ROLES[role].copy()}, member
+        if not workspace:
+            workspace = self.ensure_personal_workspace(identity)
+        row = self.store.read(lambda tx: tx.run(
+            'MATCH (m:KDWorkspaceMember {workspace_id:$workspace,actor:$actor,enabled:true}) '
+            'MATCH (w:KDWorkspace {id:m.workspace_id,status:"active"}) '
+            'RETURN properties(m) AS m,properties(w) AS w',
+            workspace=workspace, actor=identity.actor).single())
+        require(row, 'workspace_access_required', '该账号没有此工作空间的访问权限。', 403)
+        member, space = dict(row['m']), dict(row['w'])
+        role = member.get('role')
+        require(role in ROLES and member.get('dataset') == space.get('dataset'),
+                'permission_denied', '成员权限或空间绑定配置无效。', 403)
+        memberships = self.store.read(lambda tx: [dict(r) for r in tx.run(
+            'MATCH (m:KDWorkspaceMember {actor:$actor,enabled:true}) '
+            'MATCH (w:KDWorkspace {id:m.workspace_id,status:"active"}) '
+            'RETURN w.id AS id,w.dataset AS dataset,w.name AS name,w.kind AS kind,m.role AS role '
+            'ORDER BY CASE WHEN w.kind="personal" THEN 0 ELSE 1 END,w.created_at,w.id', actor=identity.actor)])
+        return {'tenant': space['id'], 'dataset': space['dataset'], 'actor': identity.actor,
+                'permissions': ROLES[role].copy()}, {'workspace': space, 'member': member,
+                'role': role, 'workspaces': memberships}
 
     def session(self, identity, workspace=''):
         from .mobile_speech import speech_available
-        context, member = self.authorize(identity, workspace)
-        space = {'id': self.workspace_id,
-                 'name': os.getenv('KD_MOBILE_WORKSPACE_NAME', self.workspace_id)}
-        return {'user': identity.actor, 'workspace': space, 'workspaces': [space],
-                'role': member['role'], 'permissions': context['permissions'],
+        context, authorized = self.authorize(identity, workspace)
+        space = authorized['workspace']
+        current = {'id': space['id'], 'name': space.get('name') or '个人空间',
+                   'kind': space.get('kind', 'personal')}
+        workspaces = [{'id': item['id'], 'name': item['name'], 'kind': item['kind'],
+                       'role': item['role']} for item in authorized['workspaces']]
+        return {'user': identity.actor, 'workspace': current, 'workspaces': workspaces,
+                'role': authorized['role'], 'permissions': context['permissions'],
                 'capabilities': {'speech': speech_available()}}
 
     def logout(self, identity):

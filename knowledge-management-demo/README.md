@@ -4,7 +4,16 @@
 
 本项目用于验证 Pydantic AI + Graphiti + Neo4j 的开放业务对象能力，独立于 Frappe 业务入口。没有引入新的 AtlasAI 主后端；本地 HTTP 服务由 Python 标准库提供。
 
-手机端使用 Auth0 免费档直接接入本服务，配置、成员授权及 HTTPS 路径白名单见 [手机端接入说明](../knowledge-mobile/README.md)。移动接口未配置时显式拒绝访问，现有本地网页仍可使用。
+手机端使用 Auth0 认证。每个已验证账号首次登录时会自动创建独立个人空间；用户、成员角色和访问审计保存在 Neo4j，知识数据按空间的 `dataset` 范围隔离。密码和 Access Token 不写入业务数据库。团队空间的创建与邀请暂不在本期开放。
+
+从旧版单空间部署升级时，先备份 Neo4j，再将旧数据绑定给确认的 Auth0 账号一次：
+
+```bash
+cd /opt/atlasai-knowledge/knowledge-management-demo
+.venv/bin/python -m demo.workspace_migrate --subject 'auth0|USER_ID' --acknowledge-data-binding
+```
+
+该迁移只创建用户、个人空间、所有者关系和审计记录，沿用旧数据集，不复制知识节点。后续新用户无需运行此命令，首次登录会获得自己的空个人空间。团队成员的本地管理入口见 `python -m demo.mobile_members --help`。
 
 ## 本地启动
 

@@ -95,12 +95,14 @@ class Pipeline:
     async def worker(self, store, stop):
         while not stop.is_set():
             try:
-                for job in await asyncio.to_thread(store.index_jobs):
-                    try:
-                        await self.for_lane(job["lane"]).project_index(job,store)
-                    except Exception:
-                        logging.getLogger("demo").warning("semantic_projection_unavailable")
-                        await asyncio.to_thread(store.index_result,job["id"])
+                for dataset in await asyncio.to_thread(store.workspace_datasets):
+                    scoped = store if dataset == store.dataset else store.for_dataset(dataset)
+                    for job in await asyncio.to_thread(scoped.index_jobs):
+                        try:
+                            await self.for_lane(job["lane"]).project_index(job,scoped)
+                        except Exception:
+                            logging.getLogger("demo").warning("semantic_projection_unavailable")
+                            await asyncio.to_thread(scoped.index_result,job["id"])
             except Exception:
                 logging.getLogger("demo").warning("projection_queue_unavailable")
             try:

@@ -1,11 +1,12 @@
 """Mobile operations behind Auth0 validation and local membership checks.
 
-One runtime and two Neo4j instances per customer. Canonical records, rather
-than semantic projections, supply browse counts. HTTP bodies never supply scope.
+One runtime serves dataset-scoped workspaces over the same two Neo4j instances.
+Canonical records, rather than semantic projections, supply browse counts.
+HTTP bodies never supply scope.
 """
 import asyncio
 import json
-import os
+import threading
 import time
 from dataclasses import dataclass
 from uuid import uuid4
@@ -38,14 +39,16 @@ FIELDS = {
 
 @dataclass(frozen=True)
 class MobileScope(ExecutionScope):
+    workspace_id: str = ''
+
     def check(self, store, permission):
         super().check(store, permission)
         # A model task may outlive a role change. Recheck before guarded actions.
         from .mobile_auth import ROLES
         row = store.read(lambda tx: tx.run(
-            'MATCH (m:KDMobileMember {dataset:$d,actor:$a,workspace:$w,enabled:true}) '
+            'MATCH (m:KDWorkspaceMember {dataset:$d,actor:$a,workspace_id:$w,enabled:true}) '
             'RETURN m.role AS role', d=self.dataset, a=self.actor,
-            w=os.getenv('KD_MOBILE_TENANT_ID', '')).single())
+            w=self.workspace_id).single())
         require(row and permission in ROLES.get(row['role'], []),
                 'permission_denied', '当前操作没有相应权限。', 403)
 
@@ -65,22 +68,41 @@ class MobileService(Service):
 
 
 class MobileGateway:
-    def __init__(self, store, pipeline):
+    def __init__(self, store, pipeline, workspace_id=''):
         self.store, self.pipeline = store, pipeline
+        self.workspace_id = workspace_id or store.dataset
         self.initialized = False
         self.running = set()
         self.conversation_locks = {}
         self.import_services = {}
         self.runtime = None
         self.tasks = set()
+        self._workspace_gateways = {}
+        self._workspace_gateways_lock = threading.Lock()
+
+    def _gateway_for(self, context):
+        workspace_id, dataset = context['tenant'], context['dataset']
+        require(isinstance(workspace_id, str) and workspace_id and
+                isinstance(dataset, str) and dataset,
+                'permission_denied', '工作空间上下文无效。', 403)
+        if self.workspace_id == workspace_id and self.store.dataset == dataset:
+            return self
+        with self._workspace_gateways_lock:
+            gateway = self._workspace_gateways.get(workspace_id)
+            if gateway is None:
+                gateway = MobileGateway(self.store.for_dataset(dataset), self.pipeline, workspace_id)
+                self._workspace_gateways[workspace_id] = gateway
+            require(gateway.store.dataset == dataset,
+                    'permission_denied', '工作空间数据绑定不匹配。', 403)
+            return gateway
 
     def initialize(self):
         if self.initialized:
             return
-        tenant = os.environ['KD_MOBILE_TENANT_ID']
+        tenant = self.workspace_id
+        binding = 'knowledge-mobile-instance-owner:' + tenant
         require(self.store.config.uri != self.store.config.pending_uri,
                 'tenant_configuration_invalid', '已确认与待确认语义库必须隔离。', 503)
-        binding = 'knowledge-mobile-instance-owner'
 
         def claim(tx, lane):
             row = tx.run('MERGE (b:KDMobileBinding {id:$id}) ON CREATE SET b.tenant=$tenant '
@@ -88,6 +110,11 @@ class MobileGateway:
                          id=binding, tenant=tenant, lane=lane).single()
             require(row['tenant'] == tenant and row['lane'] == lane, 'tenant_configuration_invalid',
                     '此数据库实例已绑定其他客户或语义通道，不能复用。', 503)
+
+        workspace = self.store.read(lambda tx: tx.run(
+            'MATCH (w:KDWorkspace {id:$id,dataset:$dataset,status:"active"}) RETURN w.id AS id',
+            id=tenant, dataset=self.store.dataset).single())
+        require(workspace, 'workspace_access_required', '工作空间不存在或已停用。', 403)
 
         self.store.write(lambda tx: claim(tx, 'approved'))
         with GraphDatabase.driver(self.store.config.pending_uri,
@@ -107,9 +134,9 @@ class MobileGateway:
         self.initialized = True
 
     def scope(self, context, payload):
-        require(isinstance(context, dict) and set(context) == {'tenant', 'actor', 'permissions'},
+        require(isinstance(context, dict) and set(context) == {'tenant', 'dataset', 'actor', 'permissions'},
                 'permission_denied', '访问受限。', 403)
-        require(context['tenant'] == os.environ['KD_MOBILE_TENANT_ID'] and
+        require(context['tenant'] == self.workspace_id and context['dataset'] == self.store.dataset and
                 isinstance(context['actor'], str) and 0 < len(context['actor']) <= 200,
                 'permission_denied', '访问受限。', 403)
         permissions = context['permissions']
@@ -121,7 +148,7 @@ class MobileGateway:
         require(isinstance(conversation_id, str) and len(conversation_id) <= 100,
                 'invalid_input', '会话参数无效。')
         scope = MobileScope(self.store.dataset, conversation_id, context['actor'],
-                               frozenset(permissions), language)
+                            frozenset(permissions), language, self.workspace_id)
         scope.check(self.store, 'read')
         return scope
 
@@ -143,6 +170,15 @@ class MobileGateway:
     async def dispatch(self, raw):
         require(isinstance(raw, dict) and set(raw) == {'context', 'operation', 'payload'},
                 'invalid_input', '请求格式无效。')
+        context = raw['context']
+        require(isinstance(context, dict) and set(context) == {'tenant', 'dataset', 'actor', 'permissions'},
+                'permission_denied', '访问受限。', 403)
+        gateway = self._gateway_for(context)
+        if gateway is not self:
+            return await gateway._dispatch(raw)
+        return await self._dispatch(raw)
+
+    async def _dispatch(self, raw):
         operation, payload = raw['operation'], raw['payload']
         require(isinstance(operation, str) and operation in FIELDS and isinstance(payload, dict),
                 'invalid_input', '请求格式无效。')
@@ -387,6 +423,8 @@ class MobileGateway:
         asyncio.create_task(cleanup())
 
     async def close(self):
+        for gateway in self._workspace_gateways.values():
+            await gateway.close()
         tasks = list(self.tasks)
         tasks.extend(task for service in self.import_services.values() for task in service.bulk.tasks.values())
         for task in tasks:

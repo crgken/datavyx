@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import json
 import time
+from copy import copy
+from dataclasses import replace
 from decimal import Decimal
 from uuid import uuid4
 
@@ -31,6 +33,20 @@ class Store(ExecutionStorage, ReviewStorage, PendingStorage, IndexStorage):
 
     def close(self):
         self.driver.close()
+
+    def for_dataset(self, dataset):
+        """Return an immutable dataset view sharing this store's Neo4j driver."""
+        if not isinstance(dataset, str) or not dataset or len(dataset) > 200:
+            raise ValueError("Invalid dataset scope")
+        scoped = copy(self)
+        scoped.config = replace(self.config, dataset=dataset)
+        scoped.dataset = dataset
+        return scoped
+
+    def workspace_datasets(self):
+        rows = self.read(lambda tx: [r["dataset"] for r in tx.run(
+            "MATCH (w:KDWorkspace {status:'active'}) RETURN DISTINCT w.dataset AS dataset ORDER BY dataset")])
+        return sorted(set(rows) | {self.dataset})
 
     def initialize(self):
         self.driver.verify_connectivity()

@@ -34,10 +34,10 @@ try {
 
     Push-Location $pwaRoot
     try {
-        Invoke-Native "flutter" @("pub", "get")
-        Invoke-Native "cmd.exe" @("/d", "/c", "npm ci")
-        Invoke-Native "flutter" @("build", "web", "--release", "--no-web-resources-cdn", "--dart-define-from-file=web-config.json")
-        Invoke-Native "cmd.exe" @("/d", "/c", "npm run pwa")
+        Invoke-Native "cmd.exe" @("/d", "/c", "call flutter pub get")
+        Invoke-Native "cmd.exe" @("/d", "/c", "call npm ci")
+        Invoke-Native "cmd.exe" @("/d", "/c", "call flutter build web --release --no-web-resources-cdn --dart-define-from-file=web-config.json")
+        Invoke-Native "cmd.exe" @("/d", "/c", "call npm run pwa")
     }
     finally { Pop-Location }
 

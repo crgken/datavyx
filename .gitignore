@@ -1,5 +1,10 @@
 /*
 !/.gitignore
+!/deploy/
+/deploy/*
+!/deploy/deploy-lightsail.ps1
+!/deploy/atlasai-apply-release.sh
+!/deploy/README.md
 !/knowledge-management-demo/
 !/knowledge-web-pwa/
 

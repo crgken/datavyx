@@ -2,7 +2,6 @@
 import argparse
 import asyncio
 import json
-import logging
 import os
 from concurrent.futures import TimeoutError as FutureTimeout
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -14,6 +13,7 @@ from dotenv import load_dotenv
 from pydantic import ValidationError
 
 from .config import Config, load_model_env
+from .diagnostics import log_failure
 from .graphiti_extension import Pipeline
 from .model import DemoError, require
 from .service import Service
@@ -234,7 +234,7 @@ def run():
                 code, message, status = "invalid_input", "结构化参数无效，请核对输入或补充说明。", 400
             else:
                 # Do not expose backend exception strings (possible keys/URIs).
-                logging.getLogger("demo").error("operation_failed: %s", type(exc).__name__)
+                log_failure("http_request", exc)
                 code, message, status = "service_unavailable", "服务执行失败；请检查数据库、模型配置或服务日志。", 503
             self.send_json({"ok": False, "errors": [{"code": code, "message": message}]}, status)
 

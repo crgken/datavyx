@@ -22,3 +22,41 @@ Install Flutter, Node.js, and npm locally; configure `knowledge-web-pwa/web-conf
 ```
 
 The script requires a clean `main` branch matching `origin/main`. Server `.env`, `model.env`, the Python virtual environment, and Neo4j Docker volumes are kept in place. The Lightsail private key stays on the local computer and is never included in the repository or release archive.
+
+## Candidate OpenAI migration
+
+Use `openai-model.env.example` to create `openai-model.env` in this directory.
+The candidate file is ignored by Git. Put the OpenAI API key in `LLM_API_KEY`.
+The selected model is `gpt-6-luna`; `LLM_REASONING_EFFORT=none` is required for
+its function calling through the current Chat Completions integration.
+See the [official model documentation](https://developers.openai.com/api/docs/models/gpt-6-luna).
+Existing embedding credentials and endpoints are independent of this LLM change.
+
+Validate the candidate without changing the running service:
+
+```bash
+cd knowledge-management-demo
+.venv/bin/python scripts/verify_openai.py --candidate-env ../deploy/openai-model.env --connection-only
+.venv/bin/python scripts/verify_openai.py --candidate-env ../deploy/openai-model.env
+```
+
+The full check requires disposable Neo4j instances on loopback ports 17694 and
+17696. It deliberately does not read production database settings. It covers real
+model calls, mobile request polling, pending saves, object browsing, idempotent
+resubmission and explicit confirmation. It does not establish that browser/Auth0
+login or background semantic indexing has passed. Keep acceptance reports in the
+ignored `knowledge-management-demo/artifacts/` directory. Use `--active-model-env`
+when the test needs existing embedding configuration, without copying its LLM
+settings into the candidate.
+
+Commit and push the implementation through Git before deploying it. Run the
+connection check from AWS as well as the isolated backend check. After both pass,
+merge the tested commit into `main`, push it, and use `deploy-lightsail.ps1`.
+The deployment script intentionally preserves the active `model.env`: changing
+the running provider requires a separate, backed-up update of its three `LLM_*`
+fields plus `LLM_REASONING_EFFORT`, followed by an API restart. Retain the previous
+model configuration for rollback and verify the protected API after restart.
+
+Failure logs contain stages, exception types, HTTP statuses, hashed request
+references, elapsed time and stack locations. They omit exception text, input
+messages, request bodies and credentials.

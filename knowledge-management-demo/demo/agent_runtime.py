@@ -4,7 +4,6 @@ The application turns an inspected, frozen preview into a deferred tool request.
 That request is stored separately from the ongoing conversation so the user can
 ask a detour question or edit a draft without orphaned model tool calls.
 """
-import logging
 import os
 
 from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, ModelMessagesTypeAdapter, ModelRetry, RunContext, ToolOutput
@@ -15,6 +14,8 @@ from pydantic_ai.usage import UsageLimits
 from pydantic_core import to_jsonable_python
 
 from .contracts import ChangeProposal, EntityLookup, QuestionReview, RunDependencies, TurnOutput
+from .diagnostics import log_failure
+from .model_client import reasoning_settings
 from .model import DemoError, Query, RecordQuery, encoded, require
 
 
@@ -82,7 +83,8 @@ class AgentRuntime:
         if model is None:
             require(os.getenv("LLM_API_KEY"), "llm_not_configured", "请配置本地模型凭据。", 503)
             provider = OpenAIProvider(api_key=os.environ["LLM_API_KEY"], base_url=os.getenv("LLM_BASE_URL", "https://api.deepseek.com/v1"))
-            model = OpenAIChatModel(os.getenv("LLM_MODEL", "deepseek-chat"), provider=provider)
+            model = OpenAIChatModel(os.getenv("LLM_MODEL", "deepseek-chat"), provider=provider,
+                                    settings=reasoning_settings())
         self.agent = Agent(model, deps_type=RunDependencies,
                            output_type=[ToolOutput(TurnOutput, name="respond"), DeferredToolRequests],
                            instructions=INSTRUCTIONS, retries=3,
@@ -261,7 +263,7 @@ class AgentRuntime:
         except DemoError:
             raise
         except Exception as exc:
-            logging.getLogger("demo").error("agent_failed stage=turn type=%s", type(exc).__name__)
+            log_failure("agent_turn", exc)
             raise DemoError("agent_execution_failed", "对话处理失败，尚未提交本轮业务变更。请重试；已收集的信息仍保留。", 502) from exc
 
     async def confirm(self, deps, approval):

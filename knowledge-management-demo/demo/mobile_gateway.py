@@ -14,6 +14,7 @@ from uuid import uuid4
 from neo4j import GraphDatabase
 
 from .contracts import ExecutionScope
+from .diagnostics import log_failure
 from .model import DemoError, digest, encoded, require
 from .service import Service
 
@@ -369,6 +370,7 @@ class MobileGateway:
         return {'request_id': request_id, **self.request_status(scope, request_id)}
 
     async def process(self, service, jid, request_id, text):
+        started = time.monotonic()
         try:
             result = await service.chat(text, request_id)
             if result.get('import_job'):
@@ -388,6 +390,8 @@ class MobileGateway:
                        title=text[:100], refs=refs).consume()
             self.store.write(complete)
         except Exception as exc:
+            log_failure('mobile_chat', exc, request_id=request_id,
+                        elapsed=time.monotonic() - started)
             receipt = self.store.pending_receipt(service.scope, request_id, text)
             if receipt:
                 result = {**receipt, 'saved_pending': True, 'clear_draft': True,

@@ -6,12 +6,13 @@ and search behavior; only reviewed canonical snapshots enter the projection.
 import asyncio
 import importlib.metadata
 import json
-import logging
 import os
 from dataclasses import replace
 from datetime import datetime, timezone
 
 from .model import encoded, require
+from .model_client import ChatCompletionsClient, reasoning_settings
+from .diagnostics import log_failure
 
 EXTRACTION = """识别开放业务领域中实际提到的具体对象，不限合同、项目或设备类型。
 金额、时间、状态、类型名称和模糊数量是属性，不要将它们当作业务对象。
@@ -45,13 +46,14 @@ class Pipeline:
         from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig
         from graphiti_core.llm_client.config import LLMConfig
         from graphiti_core.llm_client.openai_generic_client import OpenAIGenericClient
-        from openai import AsyncOpenAI
 
         llm_config = LLMConfig(api_key=os.environ["LLM_API_KEY"],
                                base_url=os.getenv("LLM_BASE_URL", "https://api.deepseek.com/v1"),
                                model=os.getenv("LLM_MODEL", "deepseek-chat"), temperature=0, max_tokens=8192)
         llm = OpenAIGenericClient(config=llm_config, max_tokens=8192, structured_output_mode="json_object",
-                                  client=AsyncOpenAI(api_key=llm_config.api_key, base_url=llm_config.base_url, timeout=90, max_retries=1))
+                                  client=ChatCompletionsClient(api_key=llm_config.api_key,
+                                      base_url=llm_config.base_url, timeout=90, max_retries=1,
+                                      reasoning_effort=reasoning_settings().get('openai_reasoning_effort')))
         embedder = OpenAIEmbedder(config=OpenAIEmbedderConfig(
             api_key=os.getenv("EMBEDDING_API_KEY") or os.environ["LLM_API_KEY"],
             base_url=os.getenv("EMBEDDING_ENDPOINT", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
@@ -100,11 +102,11 @@ class Pipeline:
                     for job in await asyncio.to_thread(scoped.index_jobs):
                         try:
                             await self.for_lane(job["lane"]).project_index(job,scoped)
-                        except Exception:
-                            logging.getLogger("demo").warning("semantic_projection_unavailable")
+                        except Exception as exc:
+                            log_failure("semantic_projection", exc)
                             await asyncio.to_thread(scoped.index_result,job["id"])
-            except Exception:
-                logging.getLogger("demo").warning("projection_queue_unavailable")
+            except Exception as exc:
+                log_failure("projection_queue", exc)
             try:
                 await asyncio.wait_for(stop.wait(), timeout=3)
             except asyncio.TimeoutError:

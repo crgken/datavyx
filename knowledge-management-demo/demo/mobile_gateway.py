@@ -14,7 +14,7 @@ from uuid import uuid4
 from neo4j import GraphDatabase
 
 from .contracts import ExecutionScope
-from .diagnostics import log_failure
+from .diagnostics import log_failure, log_mobile_event
 from .model import DemoError, digest, encoded, require
 from .service import Service
 
@@ -175,9 +175,10 @@ class MobileGateway:
         require(isinstance(context, dict) and set(context) == {'tenant', 'dataset', 'actor', 'permissions'},
                 'permission_denied', '访问受限。', 403)
         gateway = self._gateway_for(context)
-        if gateway is not self:
-            return await gateway._dispatch(raw)
-        return await self._dispatch(raw)
+        result = await gateway._dispatch(raw)
+        log_mobile_event(raw['operation'], raw['payload'],
+                         status=result.get('status') if isinstance(result, dict) else None)
+        return result
 
     async def _dispatch(self, raw):
         operation, payload = raw['operation'], raw['payload']

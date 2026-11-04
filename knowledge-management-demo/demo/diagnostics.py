@@ -2,8 +2,23 @@
 import hashlib
 import json
 import logging
+import os
 from pathlib import Path
 import traceback
+
+
+def log_mobile_event(operation, payload, *, status=None):
+    if os.getenv("KD_REQUEST_DIAGNOSTICS") != "1":
+        return
+    details = {"operation": operation, "retry_provided": "retry" in payload,
+               "retry": payload.get("retry") is True}
+    for source, target in (("request_id", "request_ref"), ("conversation_id", "conversation_ref")):
+        value = payload.get(source)
+        if isinstance(value, str) and value:
+            details[target] = hashlib.sha256(value.encode()).hexdigest()[:16]
+    if isinstance(status, str) and status in {"running", "succeeded", "failed", "interrupted", "not_found"}:
+        details["status"] = status
+    logging.getLogger("demo").warning("mobile_request_diagnostic %s", json.dumps(details))
 
 
 def log_failure(stage, error, *, request_id=None, elapsed=None):

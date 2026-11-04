@@ -1,11 +1,35 @@
 import hashlib
 import json
+import os
 import unittest
+from unittest.mock import patch
 
-from demo.diagnostics import log_failure
+from demo.diagnostics import log_failure, log_mobile_event
 
 
 class DiagnosticsTests(unittest.TestCase):
+    def test_request_diagnostics_are_opt_in(self):
+        with patch.dict(os.environ, {"KD_REQUEST_DIAGNOSTICS": "0"}):
+            with self.assertNoLogs("demo", level="WARNING"):
+                log_mobile_event("chat_submit", {"message": "private input"})
+
+    def test_request_diagnostics_record_flags_without_payload(self):
+        secret = "private-value-that-must-not-appear"
+        payload = {"message": secret, "request_id": secret, "conversation_id": secret,
+                   "Authorization": secret, "retry": True}
+        with patch.dict(os.environ, {"KD_REQUEST_DIAGNOSTICS": "1"}):
+            with self.assertLogs("demo", level="WARNING") as logs:
+                log_mobile_event("chat_submit", payload, status="failed")
+        record = logs.records[0].getMessage()
+        self.assertNotIn(secret, record)
+        details = json.loads(record.removeprefix("mobile_request_diagnostic "))
+        self.assertEqual(details["operation"], "chat_submit")
+        self.assertTrue(details["retry_provided"])
+        self.assertTrue(details["retry"])
+        self.assertEqual(details["status"], "failed")
+        self.assertEqual(set(details), {"operation", "retry_provided", "retry",
+                                      "request_ref", "conversation_ref", "status"})
+
     def test_chain_status_and_locations_without_exception_contents(self):
         secret = "test-secret-that-must-never-be-logged"
         try:

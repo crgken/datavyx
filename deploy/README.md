@@ -60,3 +60,12 @@ model configuration for rollback and verify the protected API after restart.
 Failure logs contain stages, exception types, HTTP statuses, hashed request
 references, elapsed time and stack locations. They omit exception text, input
 messages, request bodies and credentials.
+
+For a retry investigation, temporarily set `KD_REQUEST_DIAGNOSTICS=1` in the
+backend `.env` and restart the API. `mobile_request_diagnostic` records the
+validated operation, presence/value of the retry flag, returned task status and
+hashed request/conversation identifiers. It excludes input text and credentials.
+Set the flag back to `0` and restart after collecting the reproduction. Run
+`scripts/verify_mobile_retry.py` against the dedicated loopback test database on
+port 17694 to verify failure, explicit retry, successful replay and payload
+conflict behavior without real model calls.

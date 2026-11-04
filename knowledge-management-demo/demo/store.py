@@ -19,13 +19,14 @@ from .execution_store import ExecutionStorage
 from .review_store import ReviewStorage, fact_status
 from .pending_store import PendingStorage
 from .index_store import IndexStorage
+from .recording_store import RecordingStorage
 
 
 def uid():
     return str(uuid4())
 
 
-class Store(ExecutionStorage, ReviewStorage, PendingStorage, IndexStorage):
+class Store(ExecutionStorage, ReviewStorage, PendingStorage, IndexStorage, RecordingStorage):
     def __init__(self, config):
         self.config, self.dataset = config, config.dataset
         self.driver = GraphDatabase.driver(config.uri, auth=(config.user, config.password), connection_timeout=5,
@@ -80,6 +81,7 @@ class Store(ExecutionStorage, ReviewStorage, PendingStorage, IndexStorage):
     def object(self, tx, oid):
         row = tx.run("MATCH (o:KDObject {dataset:$d,id:$id}) RETURN properties(o) AS o", d=self.dataset, id=oid).single()
         require(row, "object_not_found", "对象不存在。", 404)
+        require(row['o'].get('record_state') != 'action_draft', 'operation_not_applied', '该对象属于尚未执行的操作。', 409)
         return dict(row["o"])
 
     def message(self, text, session_id="default", role="user"):
@@ -157,6 +159,9 @@ class Store(ExecutionStorage, ReviewStorage, PendingStorage, IndexStorage):
                 "(o.identity_key=$identity OR ($name<>'' AND (toLower(o.name)=$name OR $name IN coalesce(o.aliases,[]))) OR ($identifier<>'' AND toLower(o.identifier)=$identifier)) "
                 "RETURN properties(o) AS o ORDER BY o.id LIMIT 21", d=self.dataset, kind=raw["kind"], identity=identity,
                 name=key(raw["name"]), identifier=key(raw["identifier"]))]
+            require(not any(o.get('record_state') == 'action_draft' and identity and o['identity_key'] == identity for o in candidates),
+                    'operation_not_applied', '该标识属于尚未执行的操作，请先执行或取消该操作。', 409)
+            candidates = [o for o in candidates if o.get('record_state') != 'action_draft']
             existing = next((o for o in candidates if identity and o["identity_key"] == identity), None)
             if raw["existing_id"]:
                 existing = self.object(tx, raw["existing_id"])
@@ -213,15 +218,17 @@ class Store(ExecutionStorage, ReviewStorage, PendingStorage, IndexStorage):
             pair = (resolved[fact["subject"]]["id"], fact["predicate"], fields["value_key"] if fact["cardinality"] == "many" else "single")
             require(pair not in seen, "conflicting_facts", "同一对象的同一属性出现多个值，请先澄清。")
             seen.add(pair)
-            current = [dict(r["f"]) for r in tx.run(
+            assertions = [dict(r["f"]) for r in tx.run(
                 "MATCH (f:KDFact {dataset:$d,subject_id:$sid,predicate:$p,active:true,review_status:'confirmed'}) RETURN properties(f) AS f",
                 d=self.dataset, sid=resolved[fact["subject"]]["id"], p=fact["predicate"])]
+            current = [f for f in assertions if f.get('recording_policy_version',0)<2 or f.get('semantic_certain',True)]
             multi = fact["cardinality"] == "many"
             require(len(current) <= 1 or multi, "integrity_error", "该关系已有多个当前值，请明确具体要更正哪一条关系。")
             require(not multi or fact["mode"] != "replace" or len(current) <= 1,
                     "ambiguous_replacement", "多值关系更正需要明确旧关系；请分别说明要替换的关联对象。")
-            same_fact = next((f for f in current if f["value_key"] == fields["value_key"] and
-                              (fields["value_type"] != "number" or not fact["certain"] or f.get("numeric_precise", False))), None)
+            same_fact = next((f for f in assertions if f["value_key"] == fields["value_key"] and
+                              f.get('semantic_certain',f.get('numeric_precise',True)) == fact['certain'] and
+                              (fields["value_type"] != "number" or f.get("numeric_precise", False) == fact['certain'])), None)
             same = same_fact is not None
             require(not current or same or multi or not fact["certain"] or fact["mode"] == "replace",
                     "correction_required", "当前已有不同的属性值；请明确说明是否更正。")
@@ -292,19 +299,22 @@ class Store(ExecutionStorage, ReviewStorage, PendingStorage, IndexStorage):
         require(isinstance(draft_id, str) and 0 < len(draft_id) <= 100, "invalid_draft", "预览标识无效。")
         return self.write(lambda tx: self._commit(tx, draft_id, approval_id, scope))
 
-    def _commit(self, tx, draft_id, approval_id="", scope=None):
+    def _commit(self, tx, draft_id, approval_id="", scope=None, *, recording=False, automatic=False):
         revision = self.lock(tx)
         row = tx.run("MATCH (d:KDDraft {dataset:$d,id:$id}) RETURN properties(d) AS draft", d=self.dataset, id=draft_id).single()
         require(row, "draft_not_found", "预览不存在。", 404)
         draft = dict(row["draft"])
         if draft.get("runtime_version") == 2:
-            self.validate_approval(tx, draft, approval_id, scope)
+            if not (recording and automatic):
+                self.validate_approval(tx, draft, approval_id, scope)
         if draft["status"] == "committed":
             return {"draft_id": draft_id, "idempotent": True, "projection_status": draft["projection_status"]}
         require(draft["status"] == "pending", "draft_closed", "该预览已被后续澄清或取消替代，请使用最新预览。", 409)
         require(draft["expires_at"] > time.time(), "preview_expired", "预览已过期，请重新解析。", 409)
         require(draft["revision"] == revision, "preview_stale", "数据已变化，请更新预览后再确认。", 409)
         payload = json.loads(draft["payload"])
+        if recording and automatic:
+            require(self.recording_decision(tx, payload)['outcome'] == 'saved', 'confirmation_required', '这项变更需要先获得明确授权。', 409)
         if payload.get("bulk"):
             bulk = payload["bulk"]
             require(bulk["complete"] and bulk["processed_rows"] == bulk["row_count"] and not bulk["missing"],
@@ -319,13 +329,13 @@ class Store(ExecutionStorage, ReviewStorage, PendingStorage, IndexStorage):
                    id=source["id"], d=self.dataset, message=source["text"], now=now).consume()
         for obj in objects.values():
             tx.run("MERGE (o:KDObject {id:$id}) ON CREATE SET o.dataset=$d,o.name=$name,o.kind=$kind,o.identifier=$identifier,o.namespace=$namespace,o.identity_key=$identity,o.created_at=$now,o.confirmed=$certain,o.reason=$reason,o.aliases=[],o.archived=false "
-                   "SET o.confirmed=o.confirmed OR $certain "
+                   "SET o.confirmed=o.confirmed OR $certain,o.semantic_certain=coalesce(o.semantic_certain,$certain) "
                    "SET o.review_status=CASE WHEN o.confirmed THEN 'confirmed' ELSE 'pending' END "
                    "SET o.reason=CASE WHEN o.confirmed THEN '' ELSE coalesce(o.reason,$reason) END "
                    "SET o.aliases=CASE WHEN $alias IN o.aliases THEN o.aliases ELSE o.aliases+[$alias] END "
                    "WITH o MATCH (s:KDSource {dataset:$d}) WHERE s.id IN $sources MERGE (s)-[:KD_SUPPORTS]->(o)",
                    id=obj["id"], d=self.dataset, name=obj["name"], kind=obj["kind"], identifier=obj["identifier"], namespace=obj["namespace"],
-                   identity=obj["identity_key"], now=now, certain=obj["certain"], reason=obj["reason"], alias=key(obj["name"]), sources=[s["id"] for s in source_messages]).consume()
+                   identity=obj["identity_key"], now=now, certain=True if recording else obj["certain"], reason=obj["reason"], alias=key(obj["name"]), sources=[s["id"] for s in source_messages]).consume()
         for fact in payload["facts"]:
             subject = objects[fact["subject"]]
             certain = fact["certain"] and subject["certain"] and (not fact["object"] or objects[fact["object"]]["certain"])
@@ -334,15 +344,17 @@ class Store(ExecutionStorage, ReviewStorage, PendingStorage, IndexStorage):
                 tx.run("MATCH (f:KDFact {dataset:$d}) WHERE f.id IN $ids SET f.active=false,f.ended_at=$now,f.replaced_by=$new",
                        d=self.dataset, ids=fact["supersedes"], now=now, new=fact["id"]).consume()
             # Uncertain assertions never attach to or overwrite confirmed facts.
-            fid = fact["id"] if fact["certain"] else digest([source_id, fact["subject"], fact["predicate"], fields["value_key"], "pending"])
+            fid = fact["id"] if recording or fact["certain"] else digest([source_id, fact["subject"], fact["predicate"], fields["value_key"], "pending"])
             for quote in fact.get("sources") or [{"message_id": source_id, "quote": fact["evidence"]}]:
-                tx.run("MERGE (f:KDFact {id:$id}) ON CREATE SET f.dataset=$d,f.subject_id=$sid,f.predicate=$p,f.object_id=$object_id,f.value_json=$value_json,f.value_key=$value_key,f.value_type=$value_type,f.number_scaled=$number_scaled,f.unit=$unit,f.confirmed=$certain,f.active=true,f.reason=$reason,f.created_at=$now,f.cardinality=$cardinality,f.review_status=$review,f.numeric_precise=$precise "
+                tx.run("MERGE (f:KDFact {id:$id}) ON CREATE SET f.dataset=$d,f.subject_id=$sid,f.predicate=$p,f.object_id=$object_id,f.value_json=$value_json,f.value_key=$value_key,f.value_type=$value_type,f.number_scaled=$number_scaled,f.unit=$unit,f.confirmed=$certain,f.active=true,f.reason=$reason,f.created_at=$now,f.cardinality=$cardinality,f.review_status=$review,f.numeric_precise=$precise,f.semantic_certain=$semantic,f.recording_policy_version=$policy "
+                       "SET f.active=CASE WHEN $recording THEN true ELSE f.active END,f.review_status=CASE WHEN $recording THEN 'confirmed' ELSE f.review_status END,f.recording_policy_version=CASE WHEN $recording THEN 2 ELSE f.recording_policy_version END,f.semantic_certain=CASE WHEN $recording THEN $semantic ELSE f.semantic_certain END "
                        "WITH f MATCH (o:KDObject {id:$sid}), (s:KDSource {id:$source}) MERGE (o)-[:KD_HAS_FACT]->(f) "
                        "MERGE (s)-[e:KD_SUPPORTS]->(f) SET e.quotes=CASE WHEN $evidence IN coalesce(e.quotes,CASE WHEN e.quote IS NULL THEN [] ELSE [e.quote] END) THEN coalesce(e.quotes,[e.quote]) ELSE coalesce(e.quotes,CASE WHEN e.quote IS NULL THEN [] ELSE [e.quote] END)+[$evidence] END,e.quote=coalesce(e.quote,$evidence) "
                        "WITH f OPTIONAL MATCH (t:KDObject {id:$object_id}) FOREACH (_ IN CASE WHEN t IS NULL THEN [] ELSE [1] END | MERGE (f)-[:KD_TARGET]->(t))",
                        id=fid, d=self.dataset, sid=subject["id"], p=fact["predicate"], **fields, certain=certain,
                        reason=fact["reason"] or ("关联对象身份待确认" if not certain else ""), now=now, source=quote["message_id"], evidence=quote["quote"], cardinality=fact["cardinality"],
-                       review="confirmed" if fact["certain"] else "pending", precise=fact["certain"] if fields["value_type"] == "number" else True).consume()
+                       review="confirmed" if recording or fact["certain"] else "pending", precise=fact["certain"] if fields["value_type"] == "number" else True,
+                       semantic=fact['certain'], policy=2 if recording else 0, recording=recording).consume()
         for update in payload.get("entity_updates", []):
             obj = objects[update["ref"]]
             values = {update["field"]: update["value"], "identity_key": obj["identity_key"]}
@@ -356,7 +368,10 @@ class Store(ExecutionStorage, ReviewStorage, PendingStorage, IndexStorage):
                    "entity_refs": {o["ref"]: o["id"] for o in payload["objects"]},
                    "entity_updates": payload.get("entity_updates", []), "retractions": payload.get("retractions", []),
                    "reviews": payload.get("reviews", []), "actor": scope.actor if scope else "structured-import",
-                   "action_event_id": payload.get("action_event_id", "")}), now=now).consume()
+                   "action_event_id": payload.get("action_event_id", ""),
+                   "policy_version": 2 if recording else 1,
+                   "authorization_mode": 'automatic_recording' if automatic else 'explicit_approval',
+                   "approval_id": approval_id}), now=now).consume()
         if approval_id:
             tx.run("MATCH (a:KDApproval {id:$id,dataset:$d}) SET a.status='consumed'", id=approval_id, d=self.dataset).consume()
         tx.run("MATCH (d:KDData {id:$d}), (p:KDDraft {id:$id}) SET d.revision=d.revision+1,p.status='committed',p.committed_at=$now,p.projection_status='pending',p.attempts=0",
@@ -369,7 +384,7 @@ class Store(ExecutionStorage, ReviewStorage, PendingStorage, IndexStorage):
                              id=payload["bulk"]["import_id"], d=self.dataset, s=scope.session_id, actor=scope.actor).single()
             require(job_row, "import_not_found", "导入任务不存在。", 409)
             job = json.loads(job_row["payload"])
-            job.update(status="committed", entity_refs={o["ref"]:o["id"] for o in objects.values()})
+            job.update(status="saved" if recording else "committed", entity_refs={o["ref"]:o["id"] for o in objects.values()})
             tx.run("MATCH (j:KDImport {id:$id}) SET j.payload=$payload", id=job["id"], payload=encoded(job)).consume()
         changed_ids={o['id'] for o in [*payload['objects'],*payload.get('review_objects',[])]}
         dependencies={o['id'] for o in payload['objects'] if o['new'] or not o.get('previous_confirmed',False)}
@@ -380,7 +395,7 @@ class Store(ExecutionStorage, ReviewStorage, PendingStorage, IndexStorage):
 
     @staticmethod
     def where(query, confirmed=True):
-        parts, params = ["o.dataset=$d", "NOT coalesce(o.archived,false)"], {}
+        parts, params = ["o.dataset=$d", "NOT coalesce(o.archived,false)", "coalesce(o.record_state,'active')<>'action_draft'"], {}
         if confirmed:
             parts.append("o.confirmed=true")
         if query.kind:
@@ -414,7 +429,7 @@ class Store(ExecutionStorage, ReviewStorage, PendingStorage, IndexStorage):
         population_ids = [dict(r) for r in tx.run("MATCH (o:KDObject) WHERE " + population + " RETURN o.id AS id,o.confirmed AS confirmed ORDER BY o.id", **population_params, d=self.dataset)]
         matches = [r["id"] for r in tx.run(base + " RETURN o.id AS id ORDER BY o.id", **params)]
         matched_set = set(matches)
-        exclusions = [{"id": o["id"], "reason": "身份或类型待确认" if not o["confirmed"] else "条件不匹配或筛选事实未确认"} for o in population_ids if o["id"] not in matched_set]
+        exclusions = [{"id": o["id"], "reason": "身份或类型尚未明确" if not o["confirmed"] else "条件不匹配或相关信息不适用于精确统计"} for o in population_ids if o["id"] not in matched_set]
         data = {"operation": q.operation, "revision": revision, "query": q.model_dump(), "scope": "数据库中已确认、当前有效的规范记录，不含归档对象；不保证现实业务全部录入",
                 "matched_count": len(matches), "population_count": len(population_ids), "offset": q.offset, "limit": q.limit}
         participants = matches
@@ -483,7 +498,7 @@ class Store(ExecutionStorage, ReviewStorage, PendingStorage, IndexStorage):
         self.page_bounds(offset, limit)
         def read(tx):
             version = self.lock(tx, revision)
-            condition = " WHERE $archived OR NOT coalesce(o.archived,false) "
+            condition = " WHERE ($archived OR NOT coalesce(o.archived,false)) AND coalesce(o.record_state,'active')<>'action_draft' "
             total = tx.run("MATCH (o:KDObject {dataset:$d})" + condition + "RETURN count(DISTINCT o.kind) AS n", d=self.dataset, archived=include_archived).single()["n"]
             rows = [dict(r) for r in tx.run("MATCH (o:KDObject {dataset:$d})" + condition + "RETURN o.kind AS kind,count(o) AS total,count(CASE WHEN o.confirmed THEN 1 END) AS confirmed ORDER BY kind SKIP $offset LIMIT $limit",
                 d=self.dataset, archived=include_archived, offset=offset, limit=limit)]
@@ -508,6 +523,7 @@ class Store(ExecutionStorage, ReviewStorage, PendingStorage, IndexStorage):
         def read(tx):
             version = self.lock(tx, revision)
             condition = (" WHERE true" if include_archived else " WHERE NOT coalesce(o.archived,false)") + (" AND o.kind=$kind" if kind else "")
+            condition += " AND coalesce(o.record_state,'active')<>'action_draft'"
             pending_ids=list({p['subject_id'] for p in self.pending_proposals(tx)})
             pending="(o.confirmed=false OR o.id IN $pending_ids OR EXISTS { MATCH (f:KDFact {dataset:$d,subject_id:o.id,active:true,review_status:'pending'}) })"
             if status!='all':
@@ -522,7 +538,7 @@ class Store(ExecutionStorage, ReviewStorage, PendingStorage, IndexStorage):
         def read(tx):
             version = self.lock(tx, revision)
             obj = self.entity_view(self.object(tx, oid))
-            condition = "" if history else " AND f.active=true"
+            condition = " AND coalesce(f.record_state,'active')<>'action_draft'" + ("" if history else " AND f.active=true")
             total = tx.run("MATCH (f:KDFact {dataset:$d,subject_id:$id}) WHERE true" + condition + " RETURN count(f) AS n", d=self.dataset, id=oid).single()["n"]
             rows = [dict(r["f"]) for r in tx.run("MATCH (f:KDFact {dataset:$d,subject_id:$id}) WHERE true" + condition + " RETURN properties(f) AS f ORDER BY f.predicate,f.created_at,f.id SKIP $offset LIMIT $limit", d=self.dataset, id=oid, offset=offset, limit=limit)]
             rows = [self.fact_view(tx, fact) for fact in rows]
@@ -560,7 +576,7 @@ class Store(ExecutionStorage, ReviewStorage, PendingStorage, IndexStorage):
         def read(tx):
             version = self.lock(tx, revision)
             objects = {r["o"]["id"]:self.entity_view(dict(r["o"])) for r in tx.run(
-                "MATCH (o:KDObject {dataset:$d}) WHERE NOT coalesce(o.archived,false) RETURN properties(o) AS o ORDER BY o.id", d=self.dataset)}
+                "MATCH (o:KDObject {dataset:$d}) WHERE NOT coalesce(o.archived,false) AND coalesce(o.record_state,'active')<>'action_draft' RETURN properties(o) AS o ORDER BY o.id", d=self.dataset)}
             edges = []
             for row in tx.run(
                 "MATCH (f:KDFact {dataset:$d,active:true}) WHERE f.object_id<>'' AND f.subject_id IN $ids AND f.object_id IN $ids "
@@ -596,9 +612,9 @@ class Store(ExecutionStorage, ReviewStorage, PendingStorage, IndexStorage):
         """Bounded planner context is explicitly separate from full deterministic queries."""
         def read(tx):
             revision = self.lock(tx)
-            kinds = [r["value"] for r in tx.run("MATCH (o:KDObject {dataset:$d}) WHERE NOT coalesce(o.archived,false) RETURN DISTINCT o.kind AS value ORDER BY value LIMIT 101", d=self.dataset)]
+            kinds = [r["value"] for r in tx.run("MATCH (o:KDObject {dataset:$d}) WHERE NOT coalesce(o.archived,false) AND coalesce(o.record_state,'active')<>'action_draft' RETURN DISTINCT o.kind AS value ORDER BY value LIMIT 101", d=self.dataset)]
             predicates = [r["value"] for r in tx.run("MATCH (f:KDFact {dataset:$d}) RETURN DISTINCT f.predicate AS value ORDER BY value LIMIT 101", d=self.dataset)]
-            objects = [dict(r["o"]) for r in tx.run("MATCH (o:KDObject {dataset:$d}) WHERE NOT coalesce(o.archived,false) RETURN properties(o) AS o ORDER BY o.created_at DESC,o.id LIMIT 101", d=self.dataset)]
+            objects = [dict(r["o"]) for r in tx.run("MATCH (o:KDObject {dataset:$d}) WHERE NOT coalesce(o.archived,false) AND coalesce(o.record_state,'active')<>'action_draft' RETURN properties(o) AS o ORDER BY o.created_at DESC,o.id LIMIT 101", d=self.dataset)]
             signatures = [dict(r) for r in tx.run("MATCH (s:KDObject {dataset:$d})-[:KD_HAS_FACT]->(f:KDFact {active:true,confirmed:true}) OPTIONAL MATCH (f)-[:KD_TARGET]->(t:KDObject) RETURN DISTINCT s.kind AS subject_kind,f.predicate AS predicate,coalesce(t.kind,f.value_type) AS target_kind LIMIT 101", d=self.dataset)]
             return {"kinds": kinds[:100], "predicates": predicates[:100], "objects": objects[:100], "revision": revision,
                     "relation_signatures":signatures[:100], "context_truncated": len(kinds)>100 or len(predicates)>100 or len(objects)>100 or len(signatures)>100}

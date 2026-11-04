@@ -22,7 +22,7 @@ class ExecutionStorage:
         def read(tx):
             params = {"d": self.dataset, "text": key(lookup.text), "identifier": key(lookup.identifier),
                       "namespace": lookup.namespace, "kind": lookup.kind, "limit": lookup.limit}
-            where = ("o.dataset=$d AND ($text='' OR toLower(o.name) CONTAINS $text OR toLower(o.identifier) CONTAINS $text OR $text IN coalesce(o.aliases,[])) "
+            where = ("o.dataset=$d AND coalesce(o.record_state,'active')<>'action_draft' AND ($text='' OR toLower(o.name) CONTAINS $text OR toLower(o.identifier) CONTAINS $text OR $text IN coalesce(o.aliases,[])) "
                      "AND ($identifier='' OR toLower(o.identifier)=$identifier) AND ($namespace='' OR o.namespace=$namespace) AND ($kind='' OR o.kind=$kind)")
             total = tx.run("MATCH (o:KDObject) WHERE " + where + " RETURN count(o) AS n", **params).single()["n"]
             rows = [dict(r["o"]) for r in tx.run("MATCH (o:KDObject) WHERE " + where + " RETURN properties(o) AS o ORDER BY o.id LIMIT $limit", **params)]
@@ -60,7 +60,10 @@ class ExecutionStorage:
                          id=digest([self.dataset, scope.session_id]), d=self.dataset, s=scope.session_id).single()
             previous = json.loads(row["state"]) if row["state"] else {"version": 0}
             require(previous["version"] == expected_version, "conversation_changed", "会话已被另一个请求更新，请刷新后重试。", 409)
-            updated = {**state, "version": expected_version + 1}
+            updated = {**previous, **state, "version": expected_version + 1}
+            for name in ('last_save','last_commit'):
+                if previous.get(name):
+                    updated[name] = previous[name]
             tx.run("MATCH (c:KDConversation {id:$id}) SET c.execution=$state,c.updated_at=$now",
                    id=digest([self.dataset, scope.session_id]), state=encoded(updated), now=time.time()).consume()
             return updated
@@ -139,6 +142,7 @@ class ExecutionStorage:
         require(row and row["a"]["status"] in {"approved", "consumed"} and draft.get("owner_session") == scope.session_id and draft.get("owner_actor") == scope.actor,
                 "approval_required", "此预览没有有效的服务端确认。", 403)
         require(row["a"]["revision"] == draft["revision"], "preview_stale", "确认版本与预览不一致。", 409)
+        require(row['a']['status']=='consumed' or row['a']['expires_at']>time.time(), 'preview_expired', '操作已过期，请重新发起。', 409)
 
     def close_execution_draft(self, scope, draft_id):
         scope.check(self, "propose")

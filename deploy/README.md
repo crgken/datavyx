@@ -42,8 +42,8 @@ cd knowledge-management-demo
 
 The full check requires disposable Neo4j instances on loopback ports 17694 and
 17696. It deliberately does not read production database settings. It covers real
-model calls, mobile request polling, pending saves, object browsing, idempotent
-resubmission and explicit confirmation. It does not establish that browser/Auth0
+model calls, mobile request polling, automatic recording, object browsing,
+idempotent resubmission and authorization before replacing existing values. It does not establish that browser/Auth0
 login or background semantic indexing has passed. Keep acceptance reports in the
 ignored `knowledge-management-demo/artifacts/` directory. Use `--active-model-env`
 when the test needs existing embedding configuration, without copying its LLM
@@ -87,3 +87,36 @@ workspace permissions, checks that canonical/outbox counts and revision remain
 unchanged, and requires the save to finish below 25 seconds. When the diagnostic
 draft has expired, `--refresh-expiry-in-rollback` changes expiry only inside the
 rolled-back transaction. It never renews the production draft persistently.
+
+## Automatic recording policy version 2
+
+Ordinary additions are effective immediately. Estimated assertions retain their
+qualifiers and do not enter precise statistics. Identity ambiguity is clarified
+before recording; replacements, withdrawals, archival and classification changes
+require explicit authorization. `confirmed`/`review_status` are compatibility and
+eligibility fields, not evidence of human review. `recorded_by`, `recorded_at` and
+mutation `authorization_mode` capture the actual action.
+
+Run `scripts/verify_automatic_recording.py` on disposable Neo4j port 17694.
+For a committed candidate staged independently on the server:
+
+```bash
+python scripts/migrate_recording_policy.py --env /path/to/backend/.env --report /protected/path/preview.json
+python scripts/migrate_recording_policy.py --env /path/to/backend/.env --rollback-check --report /protected/path/rollback.json
+```
+
+Before applying: quiesce requests, stop the API, and back up both Neo4j data
+volumes with the database containers stopped. Preserve the current source commit
+and protected environment/model files separately. Deploy the clean, pushed main
+commit with `KD_RECORDING_MAINTENANCE=1`; reads remain available. Run the migration
+with `--apply`, verify effective counts, source links and receipts, then remove
+maintenance mode and restart. Do not replay source chats. Safe stored pending
+records activate with original IDs and provenance; risky records become isolated
+unexecuted operation drafts, old approvals are revoked, and index heads refresh.
+The migration refuses missing ownership/source context and cross-batch staging
+dependencies that require resolution. Reports contain counts and opaque refs.
+
+The migration is idempotent per dataset and transactional. Before reopening
+writes, a failed cutover can restore the backed-up volumes and previous committed
+release. After new writes are accepted, use a forward fix or reconcile those
+writes before restoring an older backup.

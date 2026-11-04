@@ -12,6 +12,7 @@ class SessionController extends ChangeNotifier {
   List<Json> messages = [];
   Json? activeConversation;
   Json? response;
+  List<Json> operations = [];
   Json? pendingRequest;
   int? objectCount;
   bool busy = false;
@@ -92,6 +93,7 @@ class SessionController extends ChangeNotifier {
     activeConversation = conversation;
     messages = [];
     response = null;
+    operations = [];
     objectCount = null;
     draft = '';
     transcript = '';
@@ -118,15 +120,23 @@ class SessionController extends ChangeNotifier {
     var latest = _rows(result);
     // Fetch until the latest window overlaps retained history. Never leave a
     // gap when more than one page arrived while this screen was inactive.
-    int overlap() => latest.isEmpty ? -1
+    int overlap() => latest.isEmpty
+        ? -1
         : previous.indexWhere((m) => m['id'] == latest.first['id']);
-    while (preserveHistory && previous.isNotEmpty && latest.isNotEmpty &&
-        overlap() < 0 && result['has_more'] == true) {
+    while (preserveHistory &&
+        previous.isNotEmpty &&
+        latest.isNotEmpty &&
+        overlap() < 0 &&
+        result['has_more'] == true) {
       final page = await api.execute('messages', {
-        'conversation_id': id, 'offset': latest.length, 'limit': 25,
+        'conversation_id': id,
+        'offset': latest.length,
+        'limit': 25,
       });
-      if (id != conversationId || generation != _generation ||
-          messageGeneration != _messageGeneration || _disposed) {
+      if (id != conversationId ||
+          generation != _generation ||
+          messageGeneration != _messageGeneration ||
+          _disposed) {
         return;
       }
       final known = latest.map((m) => m['id']).toSet();
@@ -135,8 +145,10 @@ class SessionController extends ChangeNotifier {
       latest = [...extra, ...latest];
       result = {...page, 'response': result['response']};
     }
-    if (id != conversationId || generation != _generation ||
-        messageGeneration != _messageGeneration || _disposed) {
+    if (id != conversationId ||
+        generation != _generation ||
+        messageGeneration != _messageGeneration ||
+        _disposed) {
       return;
     }
     final index = overlap();
@@ -144,6 +156,17 @@ class SessionController extends ChangeNotifier {
     messages = retained ? [...previous.take(index), ...latest] : latest;
     if (!retained) hasOlderMessages = result['has_more'] == true;
     response = result['response'] as Json?;
+    final actions = await api.execute('operations', {
+      'conversation_id': id,
+      'limit': 25,
+    });
+    if (id != conversationId ||
+        generation != _generation ||
+        messageGeneration != _messageGeneration ||
+        _disposed) {
+      return;
+    }
+    operations = _rows(actions);
     await refreshCount();
     emit();
   }
@@ -154,10 +177,14 @@ class SessionController extends ChangeNotifier {
     final generation = _generation;
     final messageGeneration = _messageGeneration;
     final data = await api.execute('messages', {
-      'conversation_id': id, 'offset': messages.length, 'limit': 25,
+      'conversation_id': id,
+      'offset': messages.length,
+      'limit': 25,
     });
-    if (id != conversationId || generation != _generation ||
-        messageGeneration != _messageGeneration || _disposed) {
+    if (id != conversationId ||
+        generation != _generation ||
+        messageGeneration != _messageGeneration ||
+        _disposed) {
       return false;
     }
     final known = messages.map((m) => m['id']).toSet();
@@ -171,7 +198,8 @@ class SessionController extends ChangeNotifier {
     if (!reset && !hasMoreConversations) return false;
     try {
       final data = await api.execute('conversations', {
-        'offset': reset ? 0 : conversations.length, 'limit': 25,
+        'offset': reset ? 0 : conversations.length,
+        'limit': 25,
       });
       if (_disposed) return false;
       if (reset) conversations = [];
@@ -181,9 +209,14 @@ class SessionController extends ChangeNotifier {
       emit();
       return hasMoreConversations;
     } catch (e) {
-      if (!_disposed && e is ApiFailure && const [
-        'permission_denied', 'not_available', 'object_not_found', 'session_expired',
-      ].contains(e.code)) {
+      if (!_disposed &&
+          e is ApiFailure &&
+          const [
+            'permission_denied',
+            'not_available',
+            'object_not_found',
+            'session_expired',
+          ].contains(e.code)) {
         conversations = [];
         hasMoreConversations = false;
         emit();
@@ -371,6 +404,25 @@ class SessionController extends ChangeNotifier {
       'conversation_id': conversationId,
       'draft_id': draftId,
       'choices': choices,
+    });
+    await refresh();
+  });
+
+  Future<void> executeChange(Json operation) => guard(() async {
+    final draft = operation['draft'] as Json;
+    await api.execute('confirm', {
+      'conversation_id': conversationId,
+      'draft_id': draft['draft_id'],
+      'approval_id': operation['approval_id'],
+      'revision': draft['revision'],
+    });
+    await refresh();
+  });
+
+  Future<void> cancelChange(Json operation) => guard(() async {
+    await api.execute('cancel_preview', {
+      'conversation_id': conversationId,
+      'draft_id': (operation['draft'] as Json)['draft_id'],
     });
     await refresh();
   });

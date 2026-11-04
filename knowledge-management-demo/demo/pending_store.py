@@ -33,7 +33,7 @@ class PendingStorage:
         q=RecordQuery.model_validate(raw)
         def read(tx):
             revision=self.lock(tx,q.revision)
-            condition=['o.dataset=$d','NOT coalesce(o.archived,false)']
+            condition=['o.dataset=$d','NOT coalesce(o.archived,false)',"coalesce(o.record_state,'active')<>'action_draft'"]
             params={'d':self.dataset}
             proposals=self.pending_proposals(tx)
             params['pending_ids']=list({p['subject_id'] for p in proposals})
@@ -62,7 +62,7 @@ class PendingStorage:
             for obj in objects:
                 facts=[self.fact_view(tx,dict(r['f'])) for r in tx.run('MATCH (f:KDFact {dataset:$d,subject_id:$id,active:true}) RETURN properties(f) AS f ORDER BY f.id LIMIT 101',d=self.dataset,id=obj['id'])]
                 rows.append({'object':self.entity_view(obj),'facts':facts[:100],'facts_truncated':len(facts)>100,'pending_proposals':[p for p in proposals if p['subject_id']==obj['id']]})
-            return {**self.page_result(rows,total,q.offset,q.limit,revision),'record_query':q.model_dump(),'query_id':new_id(),'scope':'普通查询包含已确认及待确认记录；逐条标记。精准统计仅使用已确认且有效数据。'}
+            return {**self.page_result(rows,total,q.offset,q.limit,revision),'record_query':q.model_dump(),'query_id':new_id(),'scope':'查询当前已记录的信息，保留估计或不确定性；精准统计只使用符合条件的有效数据。'}
         return self.read(read)
 
     def initialize_pending_schema(self):

@@ -1,7 +1,9 @@
 """Server-owned state and approvals, model-owned semantic decisions."""
 import asyncio
+import json
 import logging
 import re
+import time
 from uuid import uuid4
 
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
@@ -57,6 +59,76 @@ class Service:
             self._runtime = AgentRuntime(self.store, self.pipeline)
         return self._runtime
 
+    def recording_result(self, draft, state, request_id=''):
+        result = self.store.save_recording(draft['draft_id'], self.scope, request_id)
+        en = self.scope.language == 'en'
+        source_ids = [s['id'] for s in draft['source_messages']]
+        if result['outcome'] == 'saved':
+            counts = result['record_counts']
+            answer = (f"Recorded {counts['objects_created']} new objects and {counts['facts_added']} new facts."
+                      if en else f"已记录 {counts['objects_created']} 个新对象、{counts['facts_added']} 条新信息。")
+            if result.get('warnings'):
+                answer += '\n' + '\n'.join(w['message'] for w in result['warnings'])
+            return {**result, 'message': answer}, {'pending': None, 'approval': None, 'clarification': None,
+                'focus_refs': result.get('entity_refs', [])[:8]}, answer
+        pending = {'status': 'preview', 'draft_id': draft['draft_id'], 'source_message_ids': source_ids}
+        if result['outcome'] == 'clarification_required':
+            questions = [(f"Please clarify the identity or type of {next(o['name'] or o['identifier'] for o in draft['objects'] if o['ref']==q['target_ref'])}." if en else q['question'])
+                         for q in result['questions']]
+            pending.update(status='waiting')
+            return {**result, 'questions': questions, 'draft': draft}, {'pending': pending, 'approval': None}, '\n'.join(questions)
+        approval = self.store.bind_approval(self.scope, draft['draft_id'], str(uuid4()))
+        summary = self.change_summary(draft)
+        answer = ('This change has not been saved. Review the affected records and authorize it to continue.' if en else
+                  '本次变更尚未保存，请核对影响范围后选择执行或取消。')
+        return {**result, 'draft': draft, 'approval_id': approval['id'], 'change_summary': summary,
+                'message': answer}, {'pending': pending, 'approval': approval, 'clarification': None}, answer
+
+    def operation_card(self, draft_id):
+        draft = self.public_draft(draft_id)
+        approval = self.store.read(lambda tx: tx.run(
+            "MATCH (a:KDApproval {dataset:$d,draft_id:$id,actor:$actor,session_id:$s,status:'pending'}) "
+            "WHERE a.expires_at>$now RETURN a.id AS id ORDER BY a.expires_at DESC LIMIT 1",
+            d=self.store.dataset,id=draft_id,actor=self.scope.actor,s=self.scope.session_id,now=time.time()).single())
+        decision = self.store.read(lambda tx: self.store.recording_decision(tx,draft))
+        return {**decision, 'draft': draft, 'approval_id': approval['id'] if approval else None,
+                'expired': draft['expires_at'] <= time.time(), 'change_summary': self.change_summary(draft)}
+
+    def change_summary(self, draft):
+        summary = []
+        en = self.scope.language == 'en'
+        for obj in draft.get('objects', []):
+            if obj['new']:
+                summary.append(('Create: ' if en else '新增：') + (obj['name'] or obj['identifier']))
+        for update in draft.get('entity_updates', []):
+            obj = next(o for o in draft['objects'] if o['ref'] == update['ref'])
+            summary.append(f"{obj['name'] or obj['identifier']} · {update['field']}: {update['previous']} → {update['value']}")
+        for fact in draft.get('facts', []):
+            obj = next(o for o in draft['objects'] if o['ref'] == fact['subject'])
+            value = fact.get('value') or {}
+            target = next((o['name'] or o['identifier'] for o in draft['objects'] if o['ref'] == fact.get('object')), '')
+            old = []
+            for previous in fact.get('previous', []):
+                if previous.get('object_id'):
+                    target_obj = self.store.read(lambda tx: self.store.object(tx, previous['object_id']))
+                    old.append(target_obj['name'] or target_obj['identifier'])
+                else:
+                    old_value = json.loads(previous['value_json'])
+                    old.append(f"{old_value['value']} {old_value.get('unit', '')}".strip())
+            before = ', '.join(old) + ' → ' if fact.get('supersedes') else ''
+            summary.append(f"{obj['name'] or obj['identifier']} · {fact['predicate']}: {before}{target or value.get('value', '')} {value.get('unit', '')}")
+        for operation in [*draft.get('retractions', []), *draft.get('reviews', [])]:
+            target = operation.get('previous') or operation.get('before') or {}
+            name = target.get('name') or target.get('identifier') or target.get('predicate','')
+            action = 'retract' if 'fact_id' in operation else operation['action']
+            labels = {'retract':'撤回','archive':'归档','restore':'恢复','reclassify':'更正类型','restate':'重新登记','confirm':'核验'}
+            summary.append(f"{action if en else labels.get(action,action)}: {name}" +
+                           (f" ({target.get('kind','')} → {operation['after']['kind']})" if action=='reclassify' else ''))
+        impact = draft.get('review_impact',[])
+        if impact:
+            summary.append(f"Affected facts: {len(impact)}" if en else f"影响信息：{len(impact)} 条")
+        return summary
+
     async def prepare_review(self, body):
         request = ReviewRequest.model_validate(body)
         self.scope.check(self.store, "propose")
@@ -75,10 +147,18 @@ class Service:
         async with self.chat_lock:
             self.scope.check(self.store, "propose")
             state = self.store.conversation(self.scope)
-            require((state.get("pending") or {}).get("draft_id") == draft_id, "preview_changed", "预览已变化，请刷新。", 409)
-            self.close_previous(state)
-            self.store.save_conversation(self.scope, {**state, "pending": None, "approval": None, "clarification": None}, state["version"])
-            return {"clear_draft": True}
+            draft = self.public_draft(draft_id)
+            require(draft['status'] == 'pending', 'draft_closed', '该操作已执行或关闭。', 409)
+            self.store.close_execution_draft(self.scope, draft_id)
+            if draft.get('bulk'):
+                job = self.store.import_job(self.scope, draft['bulk']['import_id'])
+                job.update(status='cancelled')
+                self.store.save_import_job(self.scope, job)
+            response = {'outcome': 'cancelled', 'clear_draft': True, 'message': 'Cancelled.' if self.scope.language == 'en' else '已取消本次未执行的变更。'}
+            active = (state.get('pending') or {}).get('draft_id') == draft_id
+            self.store.save_conversation(self.scope, {**state, **({'pending':None,'approval':None,'clarification':None} if active else {}),
+                                                    'last_response': response}, state["version"])
+            return response
 
     def review_impact(self, draft_id, offset=0, limit=25):
         self.store.page_bounds(offset, limit)
@@ -125,8 +205,10 @@ class Service:
             state = self.store.conversation(self.scope)
             receipt=self.store.pending_receipt(self.scope,request_id,text)
             if receipt:
-                return {**receipt,'saved_pending':True,'idempotent':True,'message':
-                    ('This information is already saved as unconfirmed. No duplicate was created.' if self.scope.language == 'en' else '这条信息已保存为待确认，没有重复写入。'),'clear_draft':True}
+                if receipt.get('outcome') in {'confirmation_required','clarification_required'}:
+                    return {**receipt,'idempotent':True}
+                return {**receipt,'idempotent':True,'message':
+                    ('This information is already recorded. No duplicate was created.' if self.scope.language == 'en' else '这条信息已记录，没有重复写入。'),'clear_draft':True}
             state.pop("selection", None)
             state.pop("selection_record", None)
             if context_ref is not None:
@@ -172,20 +254,10 @@ class Service:
                 answer = "；".join(questions)
             elif output.action == "preview":
                 draft = deps.drafts[output.draft_id]
-                self.close_previous(state, draft["draft_id"])
-                if all(o['resolved'] for o in draft['objects']):
-                    saved=self.store.save_pending(draft['draft_id'],self.scope,request_id or '')
-                    updated.update(pending=None,approval=None,focus_refs=saved.get('entity_refs',state.get('focus_refs',[])))
-                    answer="已自动保存为待确认，可查询并在星状图中查看。核对确认后才正式生效；待确认内容不参与精准统计。" if saved.get('item_count') else "已补充来源，现有记录及其确认状态保持不变，没有重复创建信息。"
-                    if self.scope.language == 'en':
-                        answer = ('Saved as unconfirmed and available for browsing and search. It is excluded from precise statistics until confirmed and effective.' if saved.get('item_count') else 'The source was added. Existing records and confirmation states were preserved; no duplicate was created.')
-                    response={**saved,'saved_pending':True,'message':answer,'clear_draft':True}
-                else:
-                    updated.update(pending={'status':'preview','draft_id':draft['draft_id'],'source_message_ids':[s['id'] for s in draft['source_messages']]},approval=None)
-                    answer="请先选择对象身份；已收集的信息仍保留，选择后自动保存为待确认。"
-                    if self.scope.language == 'en':
-                        answer = 'Choose the object identities to continue. Collected information is preserved and will be saved as unconfirmed after resolution.'
-                    response={'draft':draft,'message':answer}
+                if output.task_relation == 'continue_draft':
+                    self.close_previous(state, draft["draft_id"])
+                response, changes, answer = self.recording_result(draft, state, request_id or '')
+                updated.update(changes)
             elif output.action == "cancel":
                 self.scope.check(self.store, "propose")
                 self.close_previous(state)
@@ -228,6 +300,16 @@ class Service:
             require(draft.get("runtime_version") == 2, "legacy_preview", "此预览来自旧执行流程，请重新描述以生成新版预览。", 409)
             approval = self.store.approve(self.scope, draft_id, approval_id, revision)
             state = self.store.conversation(self.scope)
+            if draft.get('recording_policy_version') == 2:
+                result = self.store.save_recording(draft_id, self.scope, draft.get('recording_request_id', ''), approval_id)
+                require(result['outcome'] == 'saved', 'clarification_required', '请先解决对象身份问题。', 409)
+                answer = 'The authorized change has been recorded.' if self.scope.language == 'en' else '已执行并记录本次变更。'
+                latest = self.store.conversation(self.scope)
+                result = {**result, 'message': answer}
+                self.store.message(answer, session_id=self.scope.session_id, role='assistant')
+                self.store.save_conversation(self.scope, {**latest, 'pending': None, 'approval': None,
+                    'clarification': None, 'last_response': result}, latest['version'])
+                return result
             if draft["status"] == "committed":
                 self.store.commit(draft_id, approval_id, self.scope)
                 return {"draft_id": draft_id, "idempotent": True, "message": "这条变更已保存，本次确认没有重复写入。"}
@@ -278,11 +360,7 @@ class Service:
             draft = self.store.draft(draft_id)
             deps = self.dependencies(state, {"id": draft["message_id"], "text": draft["source"]})
             updated_draft = self.changes.resolve_draft(draft_id, choices, deps)
-            if all(o['resolved'] for o in updated_draft['objects']):
-                result=self.store.save_pending(updated_draft['draft_id'],self.scope)
-                self.store.save_conversation(self.scope,{**state,'pending':None,'approval':None,'clarification':None,'focus_refs':result.get('entity_refs',[])},state['version'])
-                return {**result,'saved_pending':True,'message':'对象身份已明确，信息已保存为待确认。'}
-            approval = self.store.bind_approval(self.scope, updated_draft["draft_id"], str(uuid4()))
-            self.store.save_conversation(self.scope, {**state, "pending": {"status": "preview", "draft_id": updated_draft["draft_id"],
-                "source_message_ids": [s["id"] for s in updated_draft["source_messages"]]}, "approval": approval}, state["version"])
-            return {**updated_draft, "approval_id": approval["id"]}
+            result, changes, answer = self.recording_result(updated_draft, state)
+            self.store.save_conversation(self.scope, {**state, **changes, 'last_response': result}, state['version'])
+            self.store.message(answer, session_id=self.scope.session_id, role='assistant')
+            return result

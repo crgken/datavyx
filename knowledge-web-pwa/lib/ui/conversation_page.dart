@@ -62,9 +62,13 @@ class _ConversationPageState extends State<ConversationPage>
     GestureBinding.instance.pointerRouter.addGlobalRoute(routePointer);
     syncEditors();
     viewedConversation = session.conversationId;
-    messageAnchor = session.messages.isEmpty ? null : '${session.messages.first['id']}';
+    messageAnchor = session.messages.isEmpty
+        ? null
+        : '${session.messages.first['id']}';
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && scroll.hasClients) scroll.jumpTo(scroll.position.maxScrollExtent);
+      if (mounted && scroll.hasClients) {
+        scroll.jumpTo(scroll.position.maxScrollExtent);
+      }
     });
   }
 
@@ -87,7 +91,9 @@ class _ConversationPageState extends State<ConversationPage>
       historyRefresh.resetHeader();
     }
     if (!session.messages.any((m) => m['id'] == messageAnchor)) {
-      messageAnchor = session.messages.isEmpty ? null : '${session.messages.first['id']}';
+      messageAnchor = session.messages.isEmpty
+          ? null
+          : '${session.messages.first['id']}';
     }
     final shouldScroll =
         !readingHistory &&
@@ -113,7 +119,9 @@ class _ConversationPageState extends State<ConversationPage>
   }
 
   Future<IndicatorResult> refreshHistory() async {
-    if (readingHistory || session.loading || session.busy) return IndicatorResult.none;
+    if (readingHistory || session.loading || session.busy) {
+      return IndicatorResult.none;
+    }
     final id = session.conversationId;
     readingHistory = true;
     setState(() => localError = null);
@@ -155,11 +163,16 @@ class _ConversationPageState extends State<ConversationPage>
       center: center,
       slivers: [
         if (!session.hasOlderMessages && session.messages.isNotEmpty)
-          SliverToBoxAdapter(child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Text(context.l10n.allLoaded, textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 12, color: Palette.muted)),
-          )),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Text(
+                context.l10n.allLoaded,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 12, color: Palette.muted),
+              ),
+            ),
+          ),
         SliverPadding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
           sliver: SliverList.builder(
@@ -173,11 +186,19 @@ class _ConversationPageState extends State<ConversationPage>
           sliver: session.messages.isEmpty
               ? SliverFillRemaining(
                   hasScrollBody: false,
-                  child: Center(child: Padding(
-                    padding: const EdgeInsets.all(32),
-                    child: Text(context.l10n.noMessages, textAlign: TextAlign.center,
-                      style: const TextStyle(color: Palette.muted, height: 1.7)),
-                  )),
+                  child: Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(32),
+                      child: Text(
+                        context.l10n.noMessages,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Palette.muted,
+                          height: 1.7,
+                        ),
+                      ),
+                    ),
+                  ),
                 )
               : SliverList.builder(
                   itemCount: session.messages.length - split,
@@ -280,8 +301,11 @@ class _ConversationPageState extends State<ConversationPage>
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(Icons.install_mobile, color: Palette.teal),
-                title: Text(Localizations.localeOf(context).languageCode == 'zh'
-                    ? '添加到主屏幕' : 'Install app'),
+                title: Text(
+                  Localizations.localeOf(context).languageCode == 'zh'
+                      ? '添加到主屏幕'
+                      : 'Install app',
+                ),
                 onTap: () => showInstall(sheetContext),
               ),
               const SizedBox(height: 12),
@@ -328,7 +352,9 @@ class _ConversationPageState extends State<ConversationPage>
             children: [
               Text(s.account, style: Theme.of(context).textTheme.titleLarge),
               const SizedBox(height: 20),
-              SelectableText(api.auth.profile['name'] ?? '${api.session?['user']}'),
+              SelectableText(
+                api.auth.profile['name'] ?? '${api.session?['user']}',
+              ),
               if (api.auth.profile['email'] != null) ...[
                 const SizedBox(height: 8),
                 SelectableText(api.auth.profile['email']!),
@@ -347,18 +373,28 @@ class _ConversationPageState extends State<ConversationPage>
                 DropdownButtonFormField<String>(
                   initialValue: '${api.session?['workspace']?['id']}',
                   decoration: InputDecoration(labelText: s.switchWorkspace),
-                  items: [for (final space in api.session!['workspaces'] as List)
-                    DropdownMenuItem(value: '${space['id']}', child: Text('${space['name']}'))],
-                  onChanged: session.busy || voice.busy ? null : (id) async {
-                    if (id == null || id == api.session?['workspace']?['id']) return;
-                    Navigator.pop(sheetContext);
-                    try {
-                      await voice.discard();
-                      await widget.onWorkspace(id);
-                    } catch (e) {
-                      if (mounted) setState(() => localError = e);
-                    }
-                  },
+                  items: [
+                    for (final space in api.session!['workspaces'] as List)
+                      DropdownMenuItem(
+                        value: '${space['id']}',
+                        child: Text('${space['name']}'),
+                      ),
+                  ],
+                  onChanged: session.busy || voice.busy
+                      ? null
+                      : (id) async {
+                          if (id == null ||
+                              id == api.session?['workspace']?['id']) {
+                            return;
+                          }
+                          Navigator.pop(sheetContext);
+                          try {
+                            await voice.discard();
+                            await widget.onWorkspace(id);
+                          } catch (e) {
+                            if (mounted) setState(() => localError = e);
+                          }
+                        },
                 ),
               ],
               const SizedBox(height: 24),
@@ -436,46 +472,53 @@ class _ConversationPageState extends State<ConversationPage>
               child: PagedRefresh(
                 refreshOnStart: false,
                 onRefresh: () => session.moreConversations(reset: true),
-                onLoad: session.conversations.isEmpty ? null : session.moreConversations,
+                onLoad: session.conversations.isEmpty
+                    ? null
+                    : session.moreConversations,
                 builder: (_, physics) => session.conversations.isEmpty
-                  ? CustomScrollView(physics: physics, slivers: [
-                      SliverFillRemaining(hasScrollBody: false,
-                        child: Center(child: Text(s.noConversations))),
-                    ])
-                  : ListView.builder(
-                      physics: physics,
-                      itemCount: session.conversations.length,
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                      itemBuilder: (_, index) {
-                        final item = session.conversations[index];
-                        return Padding(
-                          padding: const EdgeInsets.only(bottom: 5),
-                          child: ListTile(
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                            selected: item['id'] == session.conversationId,
-                            selectedTileColor: Palette.soft,
-                            leading: const Icon(Icons.chat_bubble_outline),
-                            title: Text(
-                              '${item['title'] ?? ''}'.isEmpty
-                                  ? s.newConversation
-                                  : '${item['title']}',
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            onTap: session.busy || voice.busy
-                                ? null
-                                : () async {
-                                    scaffold.currentState?.closeDrawer();
-                                    await session.guard(
-                                      () => session.open(item),
-                                    );
-                                  },
+                    ? CustomScrollView(
+                        physics: physics,
+                        slivers: [
+                          SliverFillRemaining(
+                            hasScrollBody: false,
+                            child: Center(child: Text(s.noConversations)),
                           ),
-                        );
-                      },
-                    ),
+                        ],
+                      )
+                    : ListView.builder(
+                        physics: physics,
+                        itemCount: session.conversations.length,
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        itemBuilder: (_, index) {
+                          final item = session.conversations[index];
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 5),
+                            child: ListTile(
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              selected: item['id'] == session.conversationId,
+                              selectedTileColor: Palette.soft,
+                              leading: const Icon(Icons.chat_bubble_outline),
+                              title: Text(
+                                '${item['title'] ?? ''}'.isEmpty
+                                    ? s.newConversation
+                                    : '${item['title']}',
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              onTap: session.busy || voice.busy
+                                  ? null
+                                  : () async {
+                                      scaffold.currentState?.closeDrawer();
+                                      await session.guard(
+                                        () => session.open(item),
+                                      );
+                                    },
+                            ),
+                          );
+                        },
+                      ),
               ),
             ),
             const Divider(indent: 22, endIndent: 22),
@@ -601,7 +644,9 @@ class _ConversationPageState extends State<ConversationPage>
     return Semantics(
       label: s.holdToTalk,
       button: true,
-      onTap: voice.active ? () => unawaited(voice.finish()) : () => unawaited(voice.start()),
+      onTap: voice.active
+          ? () => unawaited(voice.finish())
+          : () => unawaited(voice.start()),
       onLongPress: () async {
         await voice.start();
       },
@@ -696,7 +741,8 @@ class _ConversationPageState extends State<ConversationPage>
     Widget body;
     if (voice.active) {
       body = voicePanel();
-    } else if (voice.phase == VoicePhase.recognizing || voice.phase == VoicePhase.stopping) {
+    } else if (voice.phase == VoicePhase.recognizing ||
+        voice.phase == VoicePhase.stopping) {
       body = Padding(
         padding: const EdgeInsets.all(24),
         child: Column(
@@ -875,12 +921,27 @@ class _ConversationPageState extends State<ConversationPage>
                     session.busy ? s.requestQueued : s.requestUncertain,
                     style: const TextStyle(fontSize: 12),
                   ),
-                  subtitle: session.pendingRequest?['failed'] == true ? Wrap(children: [
-                    TextButton(onPressed: session.retryFailed, child: Text(s.retry)),
-                    TextButton(onPressed: session.discardFailed, child: Text(s.discard)),
-                  ]) : null,
-                  trailing: session.busy || session.pendingRequest?['failed'] == true
-                      ? null : TextButton(onPressed: session.recover, child: Text(s.recoverRequest)),
+                  subtitle: session.pendingRequest?['failed'] == true
+                      ? Wrap(
+                          children: [
+                            TextButton(
+                              onPressed: session.retryFailed,
+                              child: Text(s.retry),
+                            ),
+                            TextButton(
+                              onPressed: session.discardFailed,
+                              child: Text(s.discard),
+                            ),
+                          ],
+                        )
+                      : null,
+                  trailing:
+                      session.busy || session.pendingRequest?['failed'] == true
+                      ? null
+                      : TextButton(
+                          onPressed: session.recover,
+                          child: Text(s.recoverRequest),
+                        ),
                 ),
               ),
             if (session.loading) const LinearProgressIndicator(minHeight: 2),
@@ -902,14 +963,34 @@ class _ConversationPageState extends State<ConversationPage>
                   processedText: s.loadSucceeded,
                   failedText: s.historyLoadFailedRetry,
                   noMoreText: s.allLoaded,
-                  textStyle: const TextStyle(fontSize: 12, color: Palette.muted),
+                  textStyle: const TextStyle(
+                    fontSize: 12,
+                    color: Palette.muted,
+                  ),
                   iconTheme: const IconThemeData(color: Palette.teal, size: 18),
                 ),
-                onRefresh: session.busy || session.loading ? null : refreshHistory,
+                onRefresh: session.busy || session.loading
+                    ? null
+                    : refreshHistory,
                 childBuilder: (_, physics) => messageList(physics),
               ),
             ),
-            if (session.response?['draft'] != null)
+            if (session.operations.isNotEmpty)
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 230),
+                child: SingleChildScrollView(
+                  child: Column(
+                    children: [
+                      for (final operation in session.operations)
+                        changeCard(operation),
+                    ],
+                  ),
+                ),
+              ),
+            if (session.response?['clarification_required'] == true &&
+                ((session.response?['draft'] as Json?)?['objects'] as List? ??
+                        [])
+                    .any((o) => o['resolved'] != true))
               TextButton.icon(
                 onPressed: () => _resolve(),
                 icon: const Icon(Icons.person_search_outlined),
@@ -951,6 +1032,68 @@ class _ConversationPageState extends State<ConversationPage>
     );
   }
 
+  Widget changeCard(Json operation) {
+    final zh = api.language == 'zh';
+    final canApprove = (api.session?['permissions'] as List? ?? []).contains(
+      'confirm',
+    );
+    final canExecute =
+        canApprove &&
+        operation['approval_id'] != null &&
+        operation['confirmation_required'] == true &&
+        operation['expired'] != true;
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              zh ? '本次变更尚未执行' : 'This change has not been applied',
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+            for (final line in (operation['change_summary'] as List? ?? []))
+              Text('$line', style: const TextStyle(fontSize: 13)),
+            if (operation['expired'] == true)
+              Text(
+                zh
+                    ? '操作已过期，请在对话中重新发起。'
+                    : 'This operation expired. Request it again in the conversation.',
+              ),
+            if (operation['clarification_required'] == true &&
+                operation['expired'] != true)
+              Text(
+                zh
+                    ? '请在对话中补充对象身份或有效来源。'
+                    : 'Provide the missing identity or valid source in the conversation.',
+              ),
+            if (!canApprove && operation['confirmation_required'] == true)
+              Text(zh ? '此操作需要审批权限。' : 'Approval permission is required.'),
+            Wrap(
+              spacing: 10,
+              children: [
+                if (operation['confirmation_required'] == true)
+                  FilledButton(
+                    onPressed: session.loading || session.busy || !canExecute
+                        ? null
+                        : () => session.executeChange(operation),
+                    child: Text(zh ? '执行变更' : 'Apply change'),
+                  ),
+                TextButton(
+                  onPressed: session.loading || session.busy
+                      ? null
+                      : () => session.cancelChange(operation),
+                  child: Text(zh ? '取消' : 'Cancel'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _resolve() async {
     final draft = session.response?['draft'] as Json?;
     if (draft == null) return;
@@ -958,6 +1101,7 @@ class _ConversationPageState extends State<ConversationPage>
         .cast<Json>()
         .where((o) => o['resolved'] != true)
         .toList();
+    if (unresolved.isEmpty) return;
     final choices = <String, dynamic>{};
     await showModalBottomSheet<void>(
       context: context,

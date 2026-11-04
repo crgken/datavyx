@@ -104,7 +104,7 @@ class GraphitiAdapter:
                     seen.update(fresh)
                     items.append({'memory_id':edge.uuid,'lane':lane,'semantic_hint':edge.fact if episodes<=allowed.keys() else '相关对象候选；以当前规范记录为准。','canonical_refs':fresh,
                         'canonical_records':snapshots,'source_message_ids':sorted({s['id'] for ep in support for s in allowed[ep]['body']['sources']}),
-                        'note':'语义内容仅作为候选；事实以规范记录的确认状态和当前版本为准。未确认信息不得当作已确认事实。'})
+                        'note':'语义内容仅作为候选；以当前规范记录、原始来源和估计或不确定性说明为准。已记录不代表事实经过人工核实。'})
             except Exception:
                 failures.append(lane)
         health=self.store.health()

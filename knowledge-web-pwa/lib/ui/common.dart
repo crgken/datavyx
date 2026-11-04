@@ -38,9 +38,14 @@ ClassicFooter listFooter(BuildContext context) {
   );
 }
 
-bool accessLost(Object error) => error is ApiFailure && const [
-  'permission_denied', 'not_available', 'object_not_found', 'session_expired',
-].contains(error.code);
+bool accessLost(Object error) =>
+    error is ApiFailure &&
+    const [
+      'permission_denied',
+      'not_available',
+      'object_not_found',
+      'session_expired',
+    ].contains(error.code);
 
 /// Shared indicator lifecycle; each caller keeps its own API and pagination.
 class PagedRefresh extends StatefulWidget {
@@ -109,10 +114,15 @@ class _PagedRefreshState extends State<PagedRefresh> {
           refreshOnStart: widget.refreshOnStart,
           resetAfterRefresh: false,
           canRefreshAfterNoMore: true,
-          header: MaterialHeader(color: Palette.teal, semanticsLabel: context.l10n.refresh),
+          header: MaterialHeader(
+            color: Palette.teal,
+            semanticsLabel: context.l10n.refresh,
+          ),
           footer: listFooter(context),
           onRefresh: () => run(reset: true),
-          onLoad: blocked || widget.onLoad == null ? null : () => run(reset: false),
+          onLoad: blocked || widget.onLoad == null
+              ? null
+              : () => run(reset: false),
           childBuilder: widget.builder,
         ),
       ),
@@ -132,6 +142,10 @@ String errorLabel(BuildContext context, Object error) {
   return switch (error.code) {
     'network_error' => s.networkError,
     'service_unavailable' => s.serviceUnavailable,
+    'recording_maintenance' =>
+      Localizations.localeOf(context).languageCode == 'zh'
+          ? '记录服务正在维护，请稍后重试。'
+          : 'Recording is temporarily paused for maintenance. Please retry shortly.',
     'identity_unavailable' => s.identityUnavailable,
     'auth_not_configured' || 'mobile_not_configured' => s.authNotConfigured,
     'login_cancelled' => s.loginCancelled,
@@ -143,7 +157,9 @@ String errorLabel(BuildContext context, Object error) {
     'permission_denied' ||
     'not_available' ||
     'object_not_found' => s.notAvailable,
-    'https_required' || 'invalid_server' || 'service_not_configured' => s.serviceNotConfigured,
+    'https_required' ||
+    'invalid_server' ||
+    'service_not_configured' => s.serviceNotConfigured,
     'data_changed' ||
     'conversation_changed' ||
     'preview_stale' => s.versionChanged,
@@ -176,6 +192,9 @@ String objectLabel(Json object) {
 
 String factValue(dynamic value) {
   if (value is Map) {
+    if (value['value'] != null) {
+      return '${value['value']} ${value['unit'] ?? ''}'.trim();
+    }
     if (value['text'] != null) return '${value['text']}';
     if (value['number'] != null) {
       return '${value['number']} ${value['unit'] ?? ''}'.trim();
@@ -233,33 +252,27 @@ class ErrorNotice extends StatelessWidget {
 }
 
 class StatusBadge extends StatelessWidget {
-  final bool confirmed;
-  final bool hasPending;
-  const StatusBadge({
-    super.key,
-    required this.confirmed,
-    this.hasPending = false,
-  });
+  final Map<String, dynamic> record;
+  const StatusBadge({super.key, required this.record});
   @override
-  Widget build(BuildContext context) => Wrap(
-    spacing: 7,
-    runSpacing: 6,
-    children: [
-      _tag(
-        confirmed ? context.l10n.confirmed : context.l10n.pending,
-        confirmed ? Icons.check_circle_outline : Icons.schedule,
-        confirmed ? Palette.teal : Palette.warning,
-        confirmed ? Palette.soft : Palette.warningFill,
-      ),
-      if (confirmed && hasPending)
-        _tag(
-          context.l10n.hasPending,
-          Icons.edit_outlined,
-          Palette.warning,
-          Palette.warningFill,
-        ),
-    ],
-  );
+  Widget build(BuildContext context) {
+    final zh = Localizations.localeOf(context).languageCode == 'zh';
+    String? label;
+    if (record['archived'] == true) {
+      label = zh ? '已归档' : 'Archived';
+    } else if (record['active'] == false) {
+      label = record['retracted_by'] != null
+          ? (zh ? '已撤回' : 'Withdrawn')
+          : (zh ? '已更正' : 'Replaced');
+    } else if (record['semantic_certain'] == false ||
+        record['numeric_precise'] == false) {
+      label = zh ? '估计或不确定信息' : 'Estimated or uncertain';
+    }
+    return label == null
+        ? const SizedBox.shrink()
+        : _tag(label, Icons.info_outline, Palette.warning, Palette.warningFill);
+  }
+
   Widget _tag(String text, IconData icon, Color color, Color fill) => Container(
     padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
     decoration: BoxDecoration(

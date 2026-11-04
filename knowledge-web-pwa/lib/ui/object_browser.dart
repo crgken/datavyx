@@ -173,10 +173,7 @@ class _ObjectBrowserState extends State<ObjectBrowser> {
                   ],
                 ),
                 const SizedBox(height: 11),
-                StatusBadge(
-                  confirmed: object['confirmed'] == true,
-                  hasPending: object['has_pending'] == true,
-                ),
+                StatusBadge(record: object),
                 const SizedBox(height: 12),
                 Wrap(
                   spacing: 20,
@@ -280,12 +277,7 @@ class _ObjectBrowserState extends State<ObjectBrowser> {
                   const SizedBox(height: 9),
                   Row(
                     children: [
-                      Expanded(
-                        child: StatusBadge(
-                          confirmed: widget.object!['confirmed'] == true,
-                          hasPending: widget.object!['has_pending'] == true,
-                        ),
-                      ),
+                      Expanded(child: StatusBadge(record: widget.object!)),
                       TextButton.icon(
                         onPressed: () => showObjectInfo(
                           context,
@@ -301,14 +293,12 @@ class _ObjectBrowserState extends State<ObjectBrowser> {
                 ],
               ),
             ),
-          if (loading && rows.isEmpty) const LinearProgressIndicator(minHeight: 2),
+          if (loading && rows.isEmpty)
+            const LinearProgressIndicator(minHeight: 2),
           if (error != null && !appendError)
             Padding(
               padding: const EdgeInsets.all(12),
-              child: ErrorNotice(
-                error: error!,
-                onRetry: refresh,
-              ),
+              child: ErrorNotice(error: error!, onRetry: refresh),
             ),
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 18, 10, 6),
@@ -346,7 +336,9 @@ class _ObjectBrowserState extends State<ObjectBrowser> {
                 ),
                 footer: listFooter(context),
                 onRefresh: refresh,
-                onLoad: rows.isEmpty || denied || refreshRequired ? null : loadNext,
+                onLoad: rows.isEmpty || denied || refreshRequired
+                    ? null
+                    : loadNext,
                 childBuilder: (_, physics) => rows.isEmpty
                     ? CustomScrollView(
                         controller: scroll,
@@ -453,6 +445,7 @@ class _ObjectInfoState extends State<_ObjectInfo> {
   final List<Json> facts = [];
   bool hasMore = false;
   int? revision;
+  bool includeHistory = false;
 
   Future<bool> load({bool reset = false}) async {
     if (!reset && !hasMore) return false;
@@ -460,6 +453,7 @@ class _ObjectInfoState extends State<_ObjectInfo> {
       final data = await widget.api.execute('detail', {
         'conversation_id': widget.conversationId,
         'id': widget.objectId,
+        'history': includeHistory,
         'offset': reset ? 0 : facts.length,
         'limit': 25,
         if (!reset && revision != null) 'revision': revision,
@@ -515,19 +509,51 @@ class _ObjectInfoState extends State<_ObjectInfo> {
                 onRefresh: () => load(reset: true),
                 onLoad: load,
                 builder: (_, physics) => object == null
-                    ? CustomScrollView(physics: physics, slivers: [
-                        SliverFillRemaining(hasScrollBody: false,
-                          child: Center(child: Text(s.noListItems))),
-                      ])
+                    ? CustomScrollView(
+                        physics: physics,
+                        slivers: [
+                          SliverFillRemaining(
+                            hasScrollBody: false,
+                            child: Center(child: Text(s.noListItems)),
+                          ),
+                        ],
+                      )
                     : ListView(
                         physics: physics,
                         children: [
                           if (object != null) ...[
                             _field(s.name, '${object!['name'] ?? ''}'),
-                            _field(s.identifier, '${object!['identifier'] ?? ''}'),
+                            _field(
+                              s.identifier,
+                              '${object!['identifier'] ?? ''}',
+                            ),
                             _field(s.kind, '${object!['kind'] ?? ''}'),
                             const SizedBox(height: 10),
-                            StatusBadge(confirmed: object!['confirmed'] == true),
+                            StatusBadge(record: object!),
+                            SwitchListTile.adaptive(
+                              contentPadding: EdgeInsets.zero,
+                              title: Text(
+                                Localizations.localeOf(context).languageCode ==
+                                        'zh'
+                                    ? '显示更正和撤回的历史信息'
+                                    : 'Show replaced and withdrawn facts',
+                              ),
+                              value: includeHistory,
+                              onChanged: (value) async {
+                                setState(() => includeHistory = value);
+                                try {
+                                  await load(reset: true);
+                                } catch (e) {
+                                  if (context.mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text(errorLabel(context, e)),
+                                      ),
+                                    );
+                                  }
+                                }
+                              },
+                            ),
                             const Divider(height: 30),
                           ],
                           for (final fact in facts)
@@ -538,17 +564,35 @@ class _ObjectInfoState extends State<_ObjectInfo> {
                                 children: [
                                   Text(
                                     '${fact['predicate']}',
-                                    style: const TextStyle(fontWeight: FontWeight.w600),
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                    ),
                                   ),
                                   const SizedBox(height: 6),
                                   SelectableText(factValue(fact['value'])),
                                   const SizedBox(height: 7),
-                                  StatusBadge(
-                                    confirmed: fact['review_status'] == 'confirmed',
-                                  ),
+                                  StatusBadge(record: fact),
+                                  if (fact['statistics_eligible'] == false &&
+                                      fact['active'] != false)
+                                    Text(
+                                      Localizations.localeOf(
+                                                context,
+                                              ).languageCode ==
+                                              'zh'
+                                          ? '不计入精确统计'
+                                          : 'Excluded from precise statistics',
+                                      style: const TextStyle(
+                                        fontSize: 12,
+                                        color: Palette.muted,
+                                      ),
+                                    ),
                                   TextButton.icon(
-                                    onPressed: () => _showSources('${fact['id']}'),
-                                    icon: const Icon(Icons.format_quote, size: 18),
+                                    onPressed: () =>
+                                        _showSources('${fact['id']}'),
+                                    icon: const Icon(
+                                      Icons.format_quote,
+                                      size: 18,
+                                    ),
                                     label: Text(
                                       '${s.sources} ${fact['source_count'] ?? ''}',
                                     ),
@@ -664,10 +708,15 @@ class _SourcesState extends State<_Sources> {
               onRefresh: () => load(reset: true),
               onLoad: load,
               builder: (_, physics) => rows.isEmpty
-                  ? CustomScrollView(physics: physics, slivers: [
-                      SliverFillRemaining(hasScrollBody: false,
-                        child: Center(child: Text(context.l10n.noListItems))),
-                    ])
+                  ? CustomScrollView(
+                      physics: physics,
+                      slivers: [
+                        SliverFillRemaining(
+                          hasScrollBody: false,
+                          child: Center(child: Text(context.l10n.noListItems)),
+                        ),
+                      ],
+                    )
                   : ListView(
                       physics: physics,
                       children: [
@@ -679,7 +728,8 @@ class _SourcesState extends State<_Sources> {
                               children: [
                                 SelectableText('${source['message'] ?? ''}'),
                                 const SizedBox(height: 12),
-                                for (final quote in source['quotes'] as List? ?? [])
+                                for (final quote
+                                    in source['quotes'] as List? ?? [])
                                   Padding(
                                     padding: const EdgeInsets.only(bottom: 6),
                                     child: SelectableText(

@@ -6,6 +6,7 @@ HTTP bodies never supply scope.
 """
 import asyncio
 import json
+import os
 import threading
 import time
 from dataclasses import dataclass
@@ -19,10 +20,11 @@ from .model import DemoError, digest, encoded, require
 from .service import Service
 
 
-PERMISSIONS = {'read', 'propose', 'record_pending', 'confirm'}
+PERMISSIONS = {'read', 'propose', 'record', 'record_pending', 'confirm'}
 FIELDS = {
     'conversations': {'offset', 'limit'}, 'conversation_create': set(),
     'messages': {'offset', 'limit'}, 'conversation_objects': {'offset', 'limit', 'revision'},
+    'operations': {'offset', 'limit'},
     'neighbors': {'id', 'offset', 'limit', 'revision'},
     'detail': {'id', 'offset', 'limit', 'revision', 'history'},
     'sources': {'id', 'offset', 'limit'}, 'graph': {'revision'},
@@ -187,6 +189,10 @@ class MobileGateway:
         require(set(payload) <= FIELDS[operation] | {'language', 'conversation_id'},
                 'invalid_input', '请求包含不允许的参数。')
         scope = self.scope(raw['context'], payload)
+        if os.getenv('KD_RECORDING_MAINTENANCE') == '1' and operation not in {
+                'conversations','messages','operations','conversation_objects','neighbors','detail','sources','graph',
+                'request_status','draft','batches','batch','query','records','audit','import','review_impact','health'}:
+            raise DemoError('recording_maintenance', '记录服务正在维护，请稍后重试。', 503)
         if operation in {'resolve', 'review_preview', 'cancel_preview', 'import_control'}:
             scope.check(self.store, 'propose')
         if operation in {'confirm', 'batch_review', 'batch_apply', 'index_retry'}:
@@ -225,6 +231,12 @@ class MobileGateway:
                 return self.store.page_result(rows[::-1], total, offset, limit, None)
             result = self.store.read(messages)
             return {**result, 'response': self.store.conversation(scope).get('last_response')}
+        if operation == 'operations':
+            drafts = self.store.read(lambda tx: [r['id'] for r in tx.run(
+                "MATCH (p:KDDraft {dataset:$d,owner_session:$s,owner_actor:$a,status:'pending',recording_policy_version:2}) "
+                "RETURN p.id AS id ORDER BY p.created_at DESC,p.id SKIP $offset LIMIT $limit",
+                d=scope.dataset,s=scope.session_id,a=scope.actor,offset=offset,limit=limit)])
+            return {'rows': [service.operation_card(did) for did in drafts]}
         if operation in {'conversation_objects', 'neighbors'}:
             return self.browse(scope, payload, neighbors=operation == 'neighbors')
         if operation == 'detail':
@@ -277,7 +289,7 @@ class MobileGateway:
         def read(tx):
             revision = self.store.lock(tx, payload.get('revision'))
             objects = {r['o']['id']: self.store.entity_view(dict(r['o'])) for r in tx.run(
-                'MATCH (o:KDObject {dataset:$d}) WHERE NOT coalesce(o.archived,false) '
+                "MATCH (o:KDObject {dataset:$d}) WHERE NOT coalesce(o.archived,false) AND coalesce(o.record_state,'active')<>'action_draft' "
                 'RETURN properties(o) AS o', d=scope.dataset)}
             relations = [dict(r['f']) for r in tx.run('MATCH (f:KDFact {dataset:$d,active:true}) '
                 'WHERE f.object_id<>\'\' AND f.object_id<>f.subject_id RETURN properties(f) AS f', d=scope.dataset)]
@@ -395,9 +407,9 @@ class MobileGateway:
                         elapsed=time.monotonic() - started)
             receipt = self.store.pending_receipt(service.scope, request_id, text)
             if receipt:
-                result = {**receipt, 'saved_pending': True, 'clear_draft': True,
-                    'message': ('Saved as unconfirmed. Check the pending records for details.'
-                        if service.scope.language == 'en' else '已保存为待确认，请在待确认记录中核对。')}
+                result = {**receipt, 'clear_draft': True,
+                    'message': ('Saved. Open the records to view the result.'
+                        if service.scope.language == 'en' else '已记录，可在对象列表中查看。')}
                 self.store.write(lambda tx: tx.run("MATCH (j:KDMobileRequest {id:$id}) "
                     "SET j.status='succeeded',j.result=$result,j.updated_at=$now",
                     id=jid, result=encoded(result), now=time.time()).consume())

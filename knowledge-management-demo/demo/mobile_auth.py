@@ -15,9 +15,9 @@ from .model import DemoError, digest, require
 
 ROLES = {
     'viewer': ['read'],
-    'editor': ['read', 'propose', 'record_pending'],
-    'reviewer': ['read', 'propose', 'record_pending', 'confirm'],
-    'owner': ['read', 'propose', 'record_pending', 'confirm'],
+    'editor': ['read', 'propose', 'record', 'record_pending'],
+    'reviewer': ['read', 'propose', 'record', 'record_pending', 'confirm'],
+    'owner': ['read', 'propose', 'record', 'record_pending', 'confirm'],
 }
 
 

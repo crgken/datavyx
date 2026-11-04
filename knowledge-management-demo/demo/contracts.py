@@ -16,12 +16,13 @@ class ExecutionScope:
     dataset: str
     session_id: str = "default"
     actor: str = "local-user"
-    permissions: frozenset[str] = frozenset({"read", "propose", "record_pending", "confirm"})
+    permissions: frozenset[str] = frozenset({"read", "propose", "record", "record_pending", "confirm"})
     language: str = "zh"
 
     def check(self, store, permission):
         require(self.dataset == store.dataset, "scope_denied", "请求不属于当前数据范围。", 403)
-        require(permission in self.permissions, "permission_denied", "当前操作没有相应权限。", 403)
+        require(permission in self.permissions or permission == "record" and "record_pending" in self.permissions,
+                "permission_denied", "当前操作没有相应权限。", 403)
 
 
 class FieldAssignment(StrictModel):

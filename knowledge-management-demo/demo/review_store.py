@@ -12,17 +12,19 @@ def fact_status(fact, entities):
     if not fact.get("active", True):
         return ("retracted" if fact.get("retracted_by") else "superseded"), []
     if fact.get("review_status", "confirmed" if fact.get("confirmed") else "pending") != "confirmed":
-        reasons.append("内容待确认")
+        reasons.append("内容尚未生效")
     for oid in dict.fromkeys([fact["subject_id"], *([fact["object_id"]] if fact.get("object_id") else [])]):
         obj = entities[oid]
         label = obj.get("name") or obj.get("identifier") or "关联对象"
         if obj.get("archived", False):
             reasons.append(label + "已归档")
         elif not obj["confirmed"]:
-            reasons.append(label + "身份或类型待确认")
+            reasons.append(label + "身份或类型尚未明确")
     if fact["value_type"] == "number" and not fact.get("numeric_precise", fact.get("confirmed", False)):
         reasons.append("数值仍不精确，需要补充确定值")
-    return ("effective" if not reasons else "pending" if reasons == ["内容待确认"] else "blocked"), reasons
+    if fact.get('recording_policy_version',0)>=2 and not fact.get('semantic_certain',True):
+        reasons.append('原始陈述包含估计或不确定性')
+    return ("effective" if not reasons else "pending" if reasons == ["内容尚未生效"] and fact.get('recording_policy_version',0)<2 else "blocked"), reasons
 
 
 class ReviewStorage:
@@ -74,14 +76,17 @@ class ReviewStorage:
 
     @staticmethod
     def entity_view(obj):
-        return {**obj, "review_status": "confirmed" if obj["confirmed"] else "pending", "archived": obj.get("archived", False)}
+        return {**obj, "record_state": 'archived' if obj.get('archived') else obj.get('record_state','active'),
+                "review_status": "confirmed" if obj["confirmed"] else "pending", "archived": obj.get("archived", False)}
 
     def fact_view(self, tx, fact):
         entities = {oid: self.object(tx, oid) for oid in {fact["subject_id"], fact.get("object_id")} if oid}
         status, reasons = fact_status(fact, entities)
         value = json.loads(fact["value_json"]) if fact["value_json"] else {
             "object_id": fact["object_id"], "value": entities[fact["object_id"]]["name"] or entities[fact["object_id"]]["identifier"]}
-        return {**fact, "value": value, "review_status": fact.get("review_status", "confirmed" if fact["confirmed"] else "pending"),
+        lifecycle = 'retracted' if fact.get('retracted_by') else 'superseded' if not fact.get('active',True) else fact.get('record_state','active')
+        return {**fact, "value": value, "record_state": lifecycle, "statistics_eligible": status=='effective',
+                "review_status": fact.get("review_status", "confirmed" if fact["confirmed"] else "pending"),
                 "effective_status": status, "blocked_reasons": reasons,
                 "numeric_precise": fact.get("numeric_precise", fact["confirmed"]),
                 "reason": "；".join(reasons) if reasons else ""}
@@ -93,7 +98,8 @@ class ReviewStorage:
                "OPTIONAL MATCH (t:KDObject {id:f.object_id,dataset:$d}) "
                "SET f.confirmed=f.active AND f.review_status='confirmed' AND s.confirmed AND NOT coalesce(s.archived,false) "
                "AND (f.object_id='' OR (t IS NOT NULL AND t.confirmed AND NOT coalesce(t.archived,false))) "
-               "AND (f.value_type<>'number' OR coalesce(f.numeric_precise,false))", d=self.dataset).consume()
+               "AND (f.value_type<>'number' OR coalesce(f.numeric_precise,false)) "
+               "AND (coalesce(f.recording_policy_version,0)<2 OR coalesce(f.semantic_certain,true))", d=self.dataset).consume()
 
     def prepare_review_operations(self, tx, operations, source_text=None, overrides=None):
         entities, facts, seen, groups = {}, {}, set(), {}

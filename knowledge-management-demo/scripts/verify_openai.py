@@ -131,7 +131,7 @@ async def verify(args):
         request_id = uuid4().hex
         await dispatch("chat_submit", request_id=request_id, message=MESSAGE)
         result = await poll(request_id)
-        check("Mobile request completed and saved as pending", result.get("saved_pending"))
+        check("Mobile request completed and recorded automatically", result.get('outcome')=='saved' and not result.get("saved_pending"))
         rows = store.objects(limit=100)["rows"]
         check("All five clients persisted", all(
             any(row["name"] == name for row in rows) for name, *_ in CLIENTS))
@@ -140,7 +140,7 @@ async def verify(args):
             values = [str(f["value"].get("value", "")) for f in store.detail(client["id"])["rows"]]
             check("Client facts preserved: " + name, city in values and industry in values and (
                 person in values or any(row["name"] == person for row in rows)))
-        check("Records await explicit confirmation", all(not row["confirmed"] for row in rows))
+        check("Records immediately become effective without human review", all(row["confirmed"] and row.get('recorded_by')==actor and not row.get('reviewed_by') for row in rows))
         count = len(rows)
         await dispatch("chat_submit", request_id=request_id, message=MESSAGE)
         await poll(request_id)
@@ -151,15 +151,23 @@ async def verify(args):
         visible = await dispatch("conversation_objects", limit=100)
         check("Conversation objects are visible", visible["total"] == count)
         batches = await dispatch("batches", limit=100)
-        check("Pending review batch is available", bool(batches["rows"]))
-        for batch in batches["rows"]:
-            review = await dispatch("batch_review", batch_id=batch["id"],
-                item_ids=[i["id"] for i in batch["items"] if i["status"] == "pending"], action="confirm")
-            await dispatch("batch_apply", token=review["token"])
-            repeated = await dispatch("batch_apply", token=review["token"])
-            check("Confirmation retry is idempotent", repeated["idempotent"])
-        check("Explicitly reviewed records are confirmed", all(
-            row["confirmed"] for row in store.objects(limit=100)["rows"]))
+        check("Ordinary records create no pending review batch", not batches['rows'])
+        check("Ordinary records create no approval card", not (await dispatch('operations'))['rows'])
+        new_request = uuid4().hex
+        await dispatch('chat_submit',request_id=new_request,message='Correct Johnson Logistics city from Chicago to Miami. Keep its other information unchanged.')
+        risk = await poll(new_request)
+        check('Real model replacement requires authorization',risk.get('confirmation_required') and risk.get('outcome')=='confirmation_required')
+        client = next(r for r in store.objects(limit=100)['rows'] if r['name']=='Johnson Logistics')
+        values = [str(f['value'].get('value','')) for f in store.detail(client['id'])['rows']]
+        check('Risk proposal leaves existing city unchanged','Chicago' in values and 'Miami' not in values)
+        operations = (await dispatch('operations'))['rows']
+        check('Risk card includes old and new values',len(operations)==1 and any('Chicago' in line and 'Miami' in line for line in operations[0]['change_summary']))
+        changed = await dispatch('confirm',draft_id=risk['draft']['draft_id'],approval_id=risk['approval_id'],revision=risk['draft']['revision'])
+        check('Authorized risk change saves successfully',changed.get('outcome')=='saved')
+        repeated = await dispatch('confirm',draft_id=risk['draft']['draft_id'],approval_id=risk['approval_id'],revision=risk['draft']['revision'])
+        check('Risk authorization replay is idempotent',repeated.get('idempotent'))
+        values = [str(f['value'].get('value','')) for f in store.detail(client['id'])['rows']]
+        check('Authorized replacement is effective','Miami' in values and 'Chicago' not in values)
         return {"checks": checks, "model": config_values["LLM_MODEL"],
                 "dataset": config.dataset, "objects": count,
                 "scope": "real model and mobile backend; excludes browser/Auth0 and semantic indexing"}

@@ -129,7 +129,7 @@ class Pipeline:
             result=await client.add_episode(name=name,uuid=rows[0]['uuid'] if rows else None,episode_body=encoded(body),
                 source=EpisodeType.json,source_description='Canonical projection; lane='+self.lane+'. Pending is NOT human approved; endpoint context is not an assertion.',
                 reference_time=datetime.fromtimestamp(job['created_at'],timezone.utc),group_id=self.config.database,
-                custom_extraction_instructions=EXTRACTION+'保留 review_status 和不确定性。objects 中已确认端点仅作上下文；proposals 是尚未生效的提议。不可将 pending 写成已确认事实。')
+                custom_extraction_instructions=EXTRACTION+'保留原始陈述的估计和不确定性。recording_policy_version=2 的有效记录表示用户提供的信息已记录，不代表人工核实或外部事实认证。proposals 是尚未执行的变更，不能写成已生效事实。')
             await asyncio.to_thread(store.index_result,job['id'],result.episode.uuid)
 
     async def close(self):

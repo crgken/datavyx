@@ -347,7 +347,7 @@ abstract class AppLocalizations {
   /// No description provided for @browseScope.
   ///
   /// In zh, this message translates to:
-  /// **'当前可见、未归档记录，包含待确认信息'**
+  /// **'当前已记录、未归档的信息；估计和不确定性按原意保留'**
   String get browseScope;
 
   /// No description provided for @holdToTalk.
@@ -653,7 +653,7 @@ abstract class AppLocalizations {
   /// No description provided for @pendingRule.
   ///
   /// In zh, this message translates to:
-  /// **'待确认信息可浏览和查询，不参与精准统计。'**
+  /// **'普通信息直接记录；有歧义时提问，覆盖或撤回等变更在执行前请求授权。估计值不计入精确合计。'**
   String get pendingRule;
 
   /// No description provided for @keepDraft.

@@ -142,7 +142,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get browseScope =>
-      'Visible, unarchived records, including unconfirmed information';
+      'Recorded, unarchived information, preserving estimates and uncertainty';
 
   @override
   String get holdToTalk => 'Hold to talk';
@@ -315,7 +315,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get pendingRule =>
-      'Unconfirmed information is searchable and visible, but excluded from precise statistics.';
+      'Ordinary information is recorded directly. Ambiguities need clarification; replacements and withdrawals require authorization before execution. Estimates are excluded from precise totals.';
 
   @override
   String get keepDraft => 'Keep current draft';

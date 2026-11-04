@@ -36,6 +36,7 @@ class DiagnosticsTests(unittest.TestCase):
             try:
                 error = RuntimeError(secret)
                 error.status_code = 429
+                error.code = "Neo.ClientError.Transaction.TransactionTimedOutClientConfiguration"
                 error.body = {"api_key": secret}
                 raise error
             except RuntimeError as error:
@@ -50,6 +51,25 @@ class DiagnosticsTests(unittest.TestCase):
         self.assertEqual(details["elapsed_seconds"], 1.235)
         self.assertEqual([c["type"] for c in details["causes"]], ["ValueError", "RuntimeError"])
         self.assertEqual(details["causes"][1]["http_status"], 429)
+        self.assertEqual(details["causes"][1]["database_code"],
+                         "Neo.ClientError.Transaction.TransactionTimedOutClientConfiguration")
+        self.assertEqual(details["causes"][0]["frames"][-1]["file"], "test_diagnostics.py")
+
+    def test_long_driver_trace_keeps_application_origin(self):
+        def driver_frames(depth):
+            if depth:
+                return driver_frames(depth - 1)
+            raise RuntimeError("private error text")
+        try:
+            driver_frames(20)
+        except RuntimeError as error:
+            with self.assertLogs("demo", level="ERROR") as logs:
+                log_failure("mobile_chat", error)
+        details = json.loads(logs.records[0].getMessage().removeprefix("operation_failed "))
+        frames = details["causes"][0]["frames"]
+        self.assertEqual(frames[0]["function"], "test_long_driver_trace_keeps_application_origin")
+        self.assertEqual(frames[-1]["function"], "driver_frames")
+        self.assertLessEqual(len(frames), 12)
         self.assertEqual(details["causes"][0]["frames"][-1]["file"], "test_diagnostics.py")
 
     def test_cyclic_causes_are_bounded(self):

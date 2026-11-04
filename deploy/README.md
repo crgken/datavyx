@@ -69,3 +69,21 @@ Set the flag back to `0` and restart after collecting the reproduction. Run
 `scripts/verify_mobile_retry.py` against the dedicated loopback test database on
 port 17694 to verify failure, explicit retry, successful replay and payload
 conflict behavior without real model calls.
+
+## Batched index outbox verification
+
+Index enqueueing prefetches the affected records, facts, source links and proposals,
+then writes both index lanes with one `UNWIND` statement in the canonical mutation
+transaction. The transaction timeout remains 30 seconds. On the dedicated local
+test database, run `scripts/verify_index_batch.py` to compare batched snapshots and
+hashes with single-record snapshots and verify confirmation, withdrawal, replay,
+incoming relationships and atomic rollback.
+
+Before deploying an index-storage change, unpack the committed candidate into an
+independent server staging directory and run its
+`scripts/verify_pending_save_rollback.py --env /path/to/backend/.env` with the installed
+runtime. Every transaction in that verifier is rolled back. It uses the real
+workspace permissions, checks that canonical/outbox counts and revision remain
+unchanged, and requires the save to finish below 25 seconds. When the diagnostic
+draft has expired, `--refresh-expiry-in-rollback` changes expiry only inside the
+rolled-back transaction. It never renews the production draft persistently.

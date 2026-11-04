@@ -3,6 +3,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 from pathlib import Path
 import traceback
 
@@ -35,9 +36,15 @@ def log_failure(stage, error, *, request_id=None, elapsed=None):
         status = getattr(current, "status_code", None)
         if type(status) is int and 100 <= status <= 599:
             cause["http_status"] = status
+        code = getattr(current, "code", None)
+        if isinstance(code, str) and re.fullmatch(r"Neo\.(ClientError|TransientError|DatabaseError)\.[A-Za-z0-9_.]{1,160}", code):
+            cause["database_code"] = code
+        frames = traceback.extract_tb(current.__traceback__)
+        if len(frames) > 12:
+            frames = frames[:6] + frames[-6:]
         cause["frames"] = [
             {"file": Path(frame.filename).name, "line": frame.lineno, "function": frame.name}
-            for frame in traceback.extract_tb(current.__traceback__)[-8:]
+            for frame in frames
         ]
         details["causes"].append(cause)
         current = current.__cause__ or (

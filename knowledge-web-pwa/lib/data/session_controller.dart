@@ -410,7 +410,7 @@ class SessionController extends ChangeNotifier {
 
   Future<void> executeChange(Json operation) => guard(() async {
     final draft = operation['draft'] as Json;
-    await api.execute('confirm', {
+    response = await api.execute('confirm', {
       'conversation_id': conversationId,
       'draft_id': draft['draft_id'],
       'approval_id': operation['approval_id'],

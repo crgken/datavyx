@@ -303,9 +303,10 @@ class Service:
             if draft.get('recording_policy_version') == 2:
                 result = self.store.save_recording(draft_id, self.scope, draft.get('recording_request_id', ''), approval_id)
                 require(result['outcome'] == 'saved', 'clarification_required', '请先解决对象身份问题。', 409)
-                answer = 'The authorized change has been recorded.' if self.scope.language == 'en' else '已执行并记录本次变更。'
+                count = result['item_count']
+                answer = f'Completed {count} changes.' if self.scope.language == 'en' else f'已完成 {count} 项变更。'
                 latest = self.store.conversation(self.scope)
-                result = {**result, 'message': answer}
+                result = {**result, 'message': answer, 'operation_completed': True}
                 self.store.message(answer, session_id=self.scope.session_id, role='assistant')
                 self.store.save_conversation(self.scope, {**latest, 'pending': None, 'approval': None,
                     'clarification': None, 'last_response': result}, latest['version'])

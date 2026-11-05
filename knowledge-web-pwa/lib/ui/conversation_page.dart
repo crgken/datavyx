@@ -10,6 +10,7 @@ import '../data/session_controller.dart';
 import '../data/voice_controller.dart';
 import 'common.dart';
 import 'object_browser.dart';
+import 'pending_changes.dart';
 import 'recording_feedback.dart';
 import 'pwa_install.dart';
 
@@ -976,15 +977,36 @@ class _ConversationPageState extends State<ConversationPage>
               ),
             ),
             if (session.operations.isNotEmpty)
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxHeight: 230),
-                child: SingleChildScrollView(
-                  child: Column(
-                    children: [
-                      for (final operation in session.operations)
-                        changeCard(operation),
-                    ],
-                  ),
+              SizedBox(
+                height: 230,
+                child: PendingChanges(
+                  operations: session.operations,
+                  canApprove: (api.session?['permissions'] as List? ?? [])
+                      .contains('confirm'),
+                  busy: session.loading || session.busy,
+                  chinese: api.language == 'zh',
+                  onApply: session.executeChange,
+                  onCancel: session.cancelChange,
+                ),
+              ),
+            if (session.response?['operation_completed'] == true)
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 6,
+                ),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.check_circle_outline,
+                      color: Palette.teal,
+                      size: 20,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text('${session.response?['message'] ?? ''}'),
+                    ),
+                  ],
                 ),
               ),
             if (session.response?['clarification_required'] == true &&
@@ -1026,68 +1048,6 @@ class _ConversationPageState extends State<ConversationPage>
               ),
             ),
             composer(),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget changeCard(Json operation) {
-    final zh = api.language == 'zh';
-    final canApprove = (api.session?['permissions'] as List? ?? []).contains(
-      'confirm',
-    );
-    final canExecute =
-        canApprove &&
-        operation['approval_id'] != null &&
-        operation['confirmation_required'] == true &&
-        operation['expired'] != true;
-    return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              zh ? '本次变更尚未执行' : 'This change has not been applied',
-              style: const TextStyle(fontWeight: FontWeight.w600),
-            ),
-            for (final line in (operation['change_summary'] as List? ?? []))
-              Text('$line', style: const TextStyle(fontSize: 13)),
-            if (operation['expired'] == true)
-              Text(
-                zh
-                    ? '操作已过期，请在对话中重新发起。'
-                    : 'This operation expired. Request it again in the conversation.',
-              ),
-            if (operation['clarification_required'] == true &&
-                operation['expired'] != true)
-              Text(
-                zh
-                    ? '请在对话中补充对象身份或有效来源。'
-                    : 'Provide the missing identity or valid source in the conversation.',
-              ),
-            if (!canApprove && operation['confirmation_required'] == true)
-              Text(zh ? '此操作需要审批权限。' : 'Approval permission is required.'),
-            Wrap(
-              spacing: 10,
-              children: [
-                if (operation['confirmation_required'] == true)
-                  FilledButton(
-                    onPressed: session.loading || session.busy || !canExecute
-                        ? null
-                        : () => session.executeChange(operation),
-                    child: Text(zh ? '执行变更' : 'Apply change'),
-                  ),
-                TextButton(
-                  onPressed: session.loading || session.busy
-                      ? null
-                      : () => session.cancelChange(operation),
-                  child: Text(zh ? '取消' : 'Cancel'),
-                ),
-              ],
-            ),
           ],
         ),
       ),

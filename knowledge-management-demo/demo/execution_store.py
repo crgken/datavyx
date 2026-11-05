@@ -29,6 +29,34 @@ class ExecutionStorage:
             return {"rows": rows, "total": total, "truncated": total > len(rows), "revision": self.lock(tx)}
         return self.read(read)
 
+    def operation_context(self, scope):
+        """Current owned operation states, independent of model message history."""
+        scope.check(self, 'read')
+        def read(tx):
+            revision = self.lock(tx)
+            now = time.time()
+            rows = tx.run("MATCH (p:KDDraft {dataset:$d,owner_session:$s,owner_actor:$a,runtime_version:2}) "
+                "OPTIONAL MATCH (a:KDApproval {dataset:$d,draft_id:p.id,session_id:$s,actor:$a}) "
+                "WHERE a.status IN ['pending','approved'] AND a.expires_at>$now AND a.revision=p.revision "
+                "RETURN p.id AS draft_id,p.status AS status,p.revision AS revision,p.expires_at AS expires_at,p.created_at AS created_at,count(a)>0 AS ready_for_review "
+                "ORDER BY created_at DESC,draft_id", d=self.dataset,s=scope.session_id,a=scope.actor,now=now)
+            active, inactive = [], []
+            for row in rows:
+                item = dict(row)
+                if item['status'] == 'pending':
+                    if item['expires_at'] <= now:
+                        item['status'] = 'expired'
+                    elif item['revision'] != revision:
+                        item['status'] = 'stale'
+                if item['status'] == 'pending':
+                    active.append(item)
+                elif len(inactive) < 8:
+                    item['ready_for_review'] = False
+                    inactive.append(item)
+            return {'revision':revision,'active':active[:25],'active_total':len(active),
+                    'active_truncated':len(active)>25,'inactive':inactive}
+        return self.read(read)
+
     def conversation(self, scope):
         scope.check(self, "read")
         def read(tx):

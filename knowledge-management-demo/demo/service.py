@@ -59,6 +59,15 @@ class Service:
             self._runtime = AgentRuntime(self.store, self.pipeline)
         return self._runtime
 
+    @staticmethod
+    def operation_history(state, draft_id, status, message):
+        event = {'application_event':'operation_state_changed','draft_id':draft_id,'status':status}
+        # This application event has no user-source ID and cannot become a fact source.
+        return [*state['history'], *to_jsonable_python([
+            ModelRequest(parts=[UserPromptPart(content='Application execution event (not user-provided business data): '+json.dumps(event))]),
+            ModelResponse(parts=[TextPart(content=message)]),
+        ])]
+
     def recording_result(self, draft, state, request_id=''):
         result = self.store.save_recording(draft['draft_id'], self.scope, request_id)
         en = self.scope.language == 'en'
@@ -154,10 +163,12 @@ class Service:
                 job = self.store.import_job(self.scope, draft['bulk']['import_id'])
                 job.update(status='cancelled')
                 self.store.save_import_job(self.scope, job)
-            response = {'outcome': 'cancelled', 'clear_draft': True, 'message': 'Cancelled.' if self.scope.language == 'en' else '已取消本次未执行的变更。'}
+            answer = 'Cancelled. This change was not applied.' if self.scope.language == 'en' else '已取消，本次变更未执行。'
+            response = {'outcome': 'cancelled', 'clear_draft': True, 'message': answer}
             active = (state.get('pending') or {}).get('draft_id') == draft_id
             self.store.save_conversation(self.scope, {**state, **({'pending':None,'approval':None,'clarification':None} if active else {}),
-                                                    'last_response': response}, state["version"])
+                'history': self.operation_history(state,draft_id,'cancelled',answer), 'last_response': response}, state["version"])
+            self.store.message(answer, session_id=self.scope.session_id, role='assistant')
             return response
 
     def review_impact(self, draft_id, offset=0, limit=25):
@@ -168,11 +179,16 @@ class Service:
 
     def dependencies(self, state, current):
         self.scope.check(self.store, "read")
+        operations = self.store.operation_context(self.scope)
+        state = {**state, 'operation_state': operations, 'data_revision': operations['revision']}
+        state.pop('current_draft', None)
+        pending_id = (state.get('pending') or {}).get('draft_id')
+        if pending_id and pending_id not in {p['draft_id'] for p in operations['active']}:
+            state.update(pending=None, approval=None, clarification=None)
         users = [m["id"] for m in self.store.messages(self.scope.session_id) if m["role"] == "user"]
         pending, clarification = state.get("pending") or {}, state.get("clarification") or {}
         ids = list(dict.fromkeys([*pending.get("source_message_ids", []), *clarification.get("source_message_ids", []), *users[-20:], current["id"]]))
         require(len(ids) <= 24, "task_too_large", "当前任务涉及的原始消息过多，请确认或取消当前任务后再继续。")
-        state = {**state, "data_revision": self.store.context()["revision"]}
         if pending.get("draft_id"):
             state["current_draft"] = self.store.draft(pending["draft_id"])
         deps = RunDependencies(self.scope, self.store, self.memory, self.changes, current, state, ids)
@@ -309,7 +325,8 @@ class Service:
                 result = {**result, 'message': answer, 'operation_completed': True}
                 self.store.message(answer, session_id=self.scope.session_id, role='assistant')
                 self.store.save_conversation(self.scope, {**latest, 'pending': None, 'approval': None,
-                    'clarification': None, 'last_response': result}, latest['version'])
+                    'clarification': None, 'last_response': result,
+                    'history':self.operation_history(latest,draft_id,'committed',answer)}, latest['version'])
                 return result
             if draft["status"] == "committed":
                 self.store.commit(draft_id, approval_id, self.scope)

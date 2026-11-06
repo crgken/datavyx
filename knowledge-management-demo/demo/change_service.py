@@ -11,8 +11,25 @@ class ChangeService:
     def __init__(self, store):
         self.store = store
 
+    def prepare_scoped_change(self, deps, coverage):
+        """The database, not a model enumeration, owns a complete set operation."""
+        current = deps.current_message
+        change = Change(schema_version=3, reviews=[ReviewOperation(
+            target_type='entity', target_id=oid, action=coverage['selection']['action'],
+            reason=f"User-requested {coverage['selection']['scope']} {coverage['selection']['action']} operation.",
+            sources=[{'message_id':current['id'], 'quote':current['text']}])
+            for oid in coverage['target_ids']])
+        draft = self.store.prepare_execution_change(change.model_dump(), current['id'], [current['id']],
+            deps.scope, coverage['revision'], coverage=coverage)
+        deps.drafts[draft['draft_id']] = draft
+        deps.tool_log.append({'tool':'prepare_change', 'draft_id':draft['draft_id'],
+                             'scope':coverage['selection']['scope'], 'target_count':coverage['target_count']})
+        return draft
+
     def prepare_change(self, proposal, deps):
         deps.scope.check(self.store, "propose")
+        require(not deps.intent or deps.intent.target_scope == 'individual', 'operation_scope_required',
+                '批量或尚不明确的范围不能通过逐条模型提案执行，请使用完整范围清单或澄清。', 409)
         ids = proposal.source_message_ids
         task_sources = {deps.current_message["id"]}
         if proposal.task_relation == "continue_draft":

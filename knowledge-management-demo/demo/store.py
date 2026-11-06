@@ -313,6 +313,10 @@ class Store(ExecutionStorage, ReviewStorage, PendingStorage, IndexStorage, Recor
         require(draft["expires_at"] > time.time(), "preview_expired", "预览已过期，请重新解析。", 409)
         require(draft["revision"] == revision, "preview_stale", "数据已变化，请更新预览后再确认。", 409)
         payload = json.loads(draft["payload"])
+        require(not draft.get('scope_fingerprint') or digest(payload.get('scope_coverage'))==draft['scope_fingerprint'],
+                'operation_scope_incomplete', '完整范围凭据缺失或不一致，禁止提交。', 409)
+        if payload.get('scope_coverage') is not None:
+            self.verify_scope_coverage(tx, payload, payload['scope_coverage'])
         if recording and automatic:
             require(self.recording_decision(tx, payload)['outcome'] == 'saved', 'confirmation_required', '这项变更需要先获得明确授权。', 409)
         if payload.get("bulk"):
@@ -368,6 +372,7 @@ class Store(ExecutionStorage, ReviewStorage, PendingStorage, IndexStorage, Recor
                    "entity_refs": {o["ref"]: o["id"] for o in payload["objects"]},
                    "entity_updates": payload.get("entity_updates", []), "retractions": payload.get("retractions", []),
                    "reviews": payload.get("reviews", []), "actor": scope.actor if scope else "structured-import",
+                   "scope_coverage": payload.get('scope_coverage'),
                    "action_event_id": payload.get("action_event_id", ""),
                    "policy_version": 2 if recording else 1,
                    "authorization_mode": 'automatic_recording' if automatic else 'explicit_approval',

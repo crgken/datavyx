@@ -7,6 +7,47 @@ from .model import digest, encoded, key, require
 
 
 class ExecutionStorage:
+    def _operation_targets(self, tx, selection, revision):
+        require(selection.get('scope') in {'workspace', 'filtered'} and selection.get('action') in {'archive', 'restore'},
+                'unsupported_operation_scope', '此批量操作的范围或动作尚不支持，请明确目标范围。', 409)
+        kind, namespace = selection.get('kind', ''), selection.get('namespace', '')
+        require(selection['scope'] != 'workspace' or not kind and not namespace,
+                'invalid_operation_scope', '整个空间的操作不能隐含缩小目标范围。', 409)
+        require(selection['scope'] != 'filtered' or bool(kind or namespace),
+                'invalid_operation_scope', '筛选范围缺少明确条件，不能按整个空间执行。', 409)
+        if kind:
+            kinds = [r['kind'] for r in tx.run("MATCH (o:KDObject {dataset:$d}) WHERE toLower(o.kind)=toLower($kind) "
+                "AND coalesce(o.record_state,'active')<>'action_draft' RETURN DISTINCT o.kind AS kind",d=self.dataset,kind=kind)]
+            require(len(kinds)==1, 'invalid_operation_scope', '对象类型无法唯一对应当前空间，请明确类型后重新生成完整预览。', 409)
+            kind = kinds[0]
+            selection = {**selection,'kind':kind}
+        rows = tx.run("MATCH (o:KDObject {dataset:$d}) WHERE coalesce(o.record_state,'active')<>'action_draft' "
+            "AND coalesce(o.archived,false)=$archived AND ($kind='' OR o.kind=$kind) "
+            "AND ($namespace='' OR o.namespace=$namespace) RETURN o.id AS id ORDER BY id LIMIT 501",
+            d=self.dataset, archived=selection['action']=='restore', kind=kind, namespace=namespace)
+        ids = [r['id'] for r in rows]
+        require(len(ids) <= 500, 'operation_scope_too_large',
+                '本次范围超过 500 条，尚未生成或执行任何部分操作；请缩小范围。', 409)
+        return {'dataset':self.dataset, 'selection':selection, 'revision':revision,
+                'target_ids':ids, 'target_count':len(ids), 'fingerprint':digest(ids)}
+
+    def operation_targets(self, scope, selection, revision):
+        scope.check(self, 'propose')
+        def read(tx):
+            return self._operation_targets(tx, selection, self.lock(tx, revision))
+        return self.read(read)
+
+    def verify_scope_coverage(self, tx, payload, coverage):
+        require(coverage.get('dataset') == self.dataset, 'scope_denied', '操作清单不属于当前空间。', 403)
+        revision = self.lock(tx, coverage['revision'])
+        current = self._operation_targets(tx, coverage['selection'], revision)
+        require(current == coverage, 'operation_scope_changed', '操作范围已变化，请重新生成完整预览。', 409)
+        operations = payload.get('reviews', [])
+        actual = [o['target_id'] for o in operations if o['target_type']=='entity' and o['action']==coverage['selection']['action']]
+        require(len(actual)==len(operations)==coverage['target_count'] and sorted(actual)==coverage['target_ids']
+                and not any(payload.get(k) for k in ('objects','facts','entity_updates','retractions')),
+                'operation_scope_incomplete', '操作清单没有完整覆盖请求范围，或包含额外变更；禁止提交部分结果。', 409)
+
     def initialize_execution_schema(self):
         with self.driver.session(database=self.config.database) as session:
             for label in ("KDApproval", "KDMutation", "KDImport"):
@@ -116,14 +157,21 @@ class ExecutionStorage:
             tx.run("MATCH (j:KDImport {id:$id}) SET j.payload=$payload,j.updated_at=$now", id=job["id"], payload=encoded(job), now=time.time()).consume()
         self.write(write)
 
-    def prepare_execution_change(self, change, message_id, source_ids, scope, revision, bulk=None):
+    def prepare_execution_change(self, change, message_id, source_ids, scope, revision, bulk=None, coverage=None):
         scope.check(self, "propose")
         def write(tx):
+            if coverage is not None:
+                self.verify_scope_coverage(tx, change, coverage)
             payload = self._prepare(tx, change, message_id, source_ids, revision)
+            if coverage is not None:
+                payload['scope_coverage'] = coverage
+                tx.run('MATCH (p:KDDraft {id:$id,dataset:$d}) SET p.scope_fingerprint=$fingerprint',
+                       id=payload['draft_id'],d=self.dataset,fingerprint=digest(coverage)).consume()
             if bulk is not None:
                 require(bulk["complete"] and bulk["processed_rows"] == bulk["row_count"] and not bulk["missing"],
                         "table_incomplete", "整表尚未完整处理，禁止创建可确认预览。")
                 payload.update(origin="bulk", bulk=bulk)
+            if bulk is not None or coverage is not None:
                 tx.run("MATCH (p:KDDraft {id:$id,dataset:$d}) SET p.payload=$payload", id=payload["draft_id"], d=self.dataset,
                        payload=encoded({k:v for k,v in payload.items() if k not in {"draft_id", "revision", "expires_at"}})).consume()
             row = tx.run("MATCH (m:KDMessage {id:$id,dataset:$d,role:'user',session_id:$s}) RETURN m.id AS id",

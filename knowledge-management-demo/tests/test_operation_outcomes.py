@@ -46,6 +46,37 @@ class OperationOutcomeTests(unittest.TestCase):
     def test_read_only_answer_is_unaffected(self):
         validate_operation_outcome(self.deps('read'),TurnOutput(action='answer',message='Explanation.'))
 
+    def test_whole_scope_cannot_use_an_unverified_partial_preview(self):
+        deps=self.deps()
+        deps.intent=RequestIntent(kind='change',target_scope='workspace',operation='archive')
+        deps.drafts={'partial':{'reviews':[{'target_id':'one'}]}}
+        with self.assertRaises(ModelRetry):
+            validate_operation_outcome(deps,TurnOutput(action='preview',draft_id='partial'))
+
+    def test_whole_scope_requires_the_current_frozen_set(self):
+        deps=self.deps()
+        deps.intent=RequestIntent(kind='change',target_scope='workspace',operation='archive')
+        deps.operation_coverage={'target_ids':['one','two'],'revision':5}
+        deps.drafts={'p':{'scope_coverage':{'target_ids':['one'],'revision':5}}}
+        with self.assertRaises(ModelRetry):
+            validate_operation_outcome(deps,TurnOutput(action='preview',draft_id='p'))
+        deps.drafts['p']['scope_coverage']=deps.operation_coverage
+        validate_operation_outcome(deps,TurnOutput(action='preview',draft_id='p'))
+
+    def test_whole_scope_cannot_use_an_unrelated_empty_query(self):
+        deps=self.deps()
+        deps.intent=RequestIntent(kind='change',target_scope='workspace',operation='archive')
+        deps.query_results['q']={'operation':'LIST','complete':True,'matched_count':0}
+        with self.assertRaises(ModelRetry):
+            validate_operation_outcome(deps,TurnOutput(action='no_change',query_id='q'))
+
+    def test_unclear_scope_cannot_be_assumed_empty(self):
+        deps=self.deps()
+        deps.intent=RequestIntent(kind='change',target_scope='unclear',operation='archive')
+        deps.query_results['q']={'operation':'COUNT','complete':True,'matched_count':0}
+        with self.assertRaises(ModelRetry):
+            validate_operation_outcome(deps,TurnOutput(action='no_change',query_id='q'))
+
     def test_completed_confirmation_keeps_its_receipt_answer(self):
         deps=self.deps()
         deps.approval_id='server-approved'

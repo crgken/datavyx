@@ -158,7 +158,9 @@ class Change(StrictModel):
     facts: list[FactInput] = Field(default_factory=list, max_length=100)
     entity_updates: list[EntityUpdate] = Field(default_factory=list, max_length=40)
     retractions: list[FactRetraction] = Field(default_factory=list, max_length=40)
-    reviews: list[ReviewOperation] = Field(default_factory=list, max_length=40)
+    # Model-authored ChangeProposal remains limited to 40. Server-resolved sets
+    # can contain more; the set resolver rejects oversize scopes atomically.
+    reviews: list[ReviewOperation] = Field(default_factory=list, max_length=500)
     clarification_required: bool = False
     questions: list[str] = Field(default_factory=list, max_length=5)
 

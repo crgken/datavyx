@@ -99,6 +99,11 @@ class QuestionReview(StrictModel):
 
 class RequestIntent(StrictModel):
     kind: Literal['read', 'record', 'change', 'operation_control', 'other']
+    target_scope: Literal['individual', 'workspace', 'filtered', 'unclear'] = 'individual'
+    operation: Literal['none', 'archive', 'restore', 'other'] = 'none'
+    entity_kind: str = Field(default='', max_length=100)
+    namespace: str = Field(default='', max_length=200)
+    filters_supported: bool = True
 
 
 class TurnOutput(StrictModel):
@@ -149,3 +154,4 @@ class RunDependencies:
     approved_draft_id: str = ""
     commit_result: dict | None = None
     intent: RequestIntent | None = None
+    operation_coverage: dict | None = None

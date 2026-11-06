@@ -58,12 +58,24 @@ async def main(args):
         check('Reissue has a fresh unexpired authorization',second['approval_id']!=first['approval_id'] and second['draft']['expires_at']>time.time() and store.operation_context(scope)['active_total']==1)
         check('Reissue does not apply archive without authorization',store.objects()['total']==3 and store.query({'operation':'COUNT','kind':'Client'})['count']==3)
         check('Another actor cannot see these operation states',store.operation_context(replace(scope,actor='another-actor'))['active_total']==0)
+        existing=await service.chat('Show me the existing pending archive review.',uuid4().hex)
+        check('Existing valid review is returned as an actionable card',existing.get('confirmation_required') and existing['draft']['draft_id']==second['draft']['draft_id'] and existing['approval_id']==second['approval_id'])
         try:
             await service.confirm(old['draft_id'],first['approval_id'],old['revision'])
         except DemoError as error:
             check('Old expired authorization cannot execute',error.code in {'preview_expired','draft_closed','approval_required'})
         else:
             raise AssertionError('Old authorization executed')
+        empty=Store(replace(config,dataset='empty-operation-'+uuid4().hex))
+        empty_service=Service(empty,pipeline,scope=replace(scope,dataset=empty.dataset))
+        try:
+            empty.initialize()
+            no_change=await empty_service.chat('Archive all records of the current space.',uuid4().hex)
+            check('Empty scope returns verified no-change evidence',no_change.get('outcome')=='no_change' and no_change['result']['complete'] and no_change['result']['matched_count']==0)
+        finally:
+            if empty_service._runtime:
+                await empty_service._runtime.close()
+            empty.close()
         report={'passed':True,'checks':checks,'scope':'real GPT-6 Luna backend on isolated test databases'}
         target=Path(__file__).resolve().parent.parent/'artifacts/cancelled-operation.json'
         target.write_text(json.dumps(report,indent=2),encoding='utf-8')

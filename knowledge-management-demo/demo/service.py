@@ -96,8 +96,8 @@ class Service:
     def operation_card(self, draft_id):
         draft = self.public_draft(draft_id)
         approval = self.store.read(lambda tx: tx.run(
-            "MATCH (a:KDApproval {dataset:$d,draft_id:$id,actor:$actor,session_id:$s,status:'pending'}) "
-            "WHERE a.expires_at>$now RETURN a.id AS id ORDER BY a.expires_at DESC LIMIT 1",
+            "MATCH (a:KDApproval {dataset:$d,draft_id:$id,actor:$actor,session_id:$s}) "
+            "WHERE a.status IN ['pending','approved'] AND a.expires_at>$now RETURN a.id AS id ORDER BY a.expires_at DESC LIMIT 1",
             d=self.store.dataset,id=draft_id,actor=self.scope.actor,s=self.scope.session_id,now=time.time()).single())
         decision = self.store.read(lambda tx: self.store.recording_decision(tx,draft))
         return {**decision, 'draft': draft, 'approval_id': approval['id'] if approval else None,
@@ -274,6 +274,19 @@ class Service:
                     self.close_previous(state, draft["draft_id"])
                 response, changes, answer = self.recording_result(draft, state, request_id or '')
                 updated.update(changes)
+            elif output.action == 'review':
+                response = self.operation_card(output.draft_id)
+                require(response.get('approval_id') and response.get('confirmation_required') and not response['expired'],
+                    'preview_expired','操作已失效，请重新发起。',409)
+                answer = output.message or ('Review this existing change before applying it.' if self.scope.language=='en' else '请核对这项尚未执行的变更。')
+                response.update(message=answer)
+                reviewed = response['draft']
+                updated.update(pending={'status':'preview','draft_id':output.draft_id,
+                    'source_message_ids':[s['id'] for s in reviewed['source_messages']]},
+                    approval={'id':response['approval_id'],'draft_id':output.draft_id,'revision':reviewed['revision']})
+            elif output.action == 'no_change':
+                answer = output.message or ('No matching records need changing.' if self.scope.language=='en' else '没有符合条件、需要变更的记录。')
+                response = {'message':answer,'outcome':'no_change','result':deps.query_results[output.query_id]}
             elif output.action == "cancel":
                 self.scope.check(self.store, "propose")
                 self.close_previous(state)
@@ -295,6 +308,8 @@ class Service:
                 answer = output.message
                 response = {"message": answer}
             internal = [*deps.drafts, *deps.query_results]
+            if output.action == 'review':
+                internal.append(output.draft_id)
             previous = (state.get("pending") or {}).get("draft_id")
             if previous:
                 internal.append(previous)

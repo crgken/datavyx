@@ -97,8 +97,12 @@ class QuestionReview(StrictModel):
     reason: str = Field(min_length=1, max_length=1500)
 
 
+class RequestIntent(StrictModel):
+    kind: Literal['read', 'record', 'change', 'operation_control', 'other']
+
+
 class TurnOutput(StrictModel):
-    action: Literal["answer", "clarify", "preview", "query", "browse", "cancel"]
+    action: Literal["answer", "clarify", "preview", "query", "browse", "cancel", "review", "no_change"]
     task_relation: Literal["continue_draft", "new_change", "detour", "none"] = "none"
     message: str = Field(default="", max_length=6000)
     questions: list[SemanticQuestion] = Field(default_factory=list, max_length=5)
@@ -111,7 +115,8 @@ class TurnOutput(StrictModel):
     def check_output(self):
         require(self.action != "clarify" or bool(self.questions), "missing_questions", "澄清必须提供实际需要用户回答的问题。")
         require(self.action != "query" or bool(self.query_id), "missing_query", "查询回答必须引用本次执行的查询。")
-        require(self.action != "preview" or bool(self.draft_id), "missing_preview", "预览必须引用本次生成的草稿。")
+        require(self.action not in {"preview", "review"} or bool(self.draft_id), "missing_preview", "操作必须引用实际草稿。")
+        require(self.action != "no_change" or bool(self.query_id), "missing_query", "无需变更必须引用本次查询结果。")
         return self
 
 
@@ -143,3 +148,4 @@ class RunDependencies:
     approval_id: str = ""
     approved_draft_id: str = ""
     commit_result: dict | None = None
+    intent: RequestIntent | None = None

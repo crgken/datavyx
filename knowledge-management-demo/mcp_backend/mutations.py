@@ -157,7 +157,10 @@ class Mutations:
                     units={fact_value(f).get('unit','') for f in selected if fact_value(f).get('type')=='number'}
                     require(len(units)==1 and all(fact_value(f).get('type')=='number' for f in selected),
                             'AMBIGUOUS_UNIT','The target facts do not establish one inherited unit.',409)
-                    value=value.model_copy(update={'unit':next(iter(units))})
+                    inherited=next(iter(units))
+                    require(value.unit in {'',inherited},'UNIT_INHERITANCE_MISMATCH',
+                            'For inherit_unit, send an empty unit or exactly the current stored label; changing currency requires explicit evidence.',409)
+                    value=value.model_copy(update={'unit':inherited})
                 elif value is not None:
                     validate_record(RecordInput(request_id=data.request_id,sources=data.sources,
                         entities=[{'ref':'target','action':'reference','entity_id':obj['id']}],

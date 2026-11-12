@@ -173,7 +173,7 @@ class HTTPProtocolTests(unittest.TestCase):
                 data=sample();saved=await call('record_information',data);oid=saved['entity_ids']['a']
                 correction={**instruction('http-correction-001',text='Change amount to 65.'),'changes':[{
                     'action':'replace_fact','entity_id':oid,'expected_version':1,'predicate':'amount','fact_ids':saved['fact_ids'],
-                    'quotes':[{'source_ref':'s','quote':'65'}],'replacements':[{'value':{'type':'number','decimal':'65','unit':''},
+                    'quotes':[{'source_ref':'s','quote':'65'}],'replacements':[{'value':{'type':'number','decimal':'65','unit':'USD'},
                         'inherit_unit':True,'quotes':[{'source_ref':'s','quote':'65'}]}]}]}
                 await call('update_information',correction)
                 selection={'resource':'entity','ids':[oid]}
@@ -234,6 +234,26 @@ class HTTPProtocolTests(unittest.TestCase):
                 replay=await client.call_tool('delete_information',body)
                 self.assertFalse(replay.is_error)
                 self.assertTrue(replay.structured_content['idempotent'])
+        asyncio.run(run())
+
+    def test_validation_errors_identify_schema_fields_without_exposing_values_or_unknown_keys(self):
+        secret='PRIVATE-INVALID-INPUT-NEVER-LOG-456'
+        async def run():
+            body={**instruction('http-invalid-v2-001',text=secret),'schema_version':'1.0',secret:secret,
+                'workspace_id':self.scope.workspace_id,'changes':[{
+                    'action':'set_entity_fields','entity_id':'unused','expected_version':secret,
+                    'fields':{'name':'Synthetic'},'quotes':[{'source_ref':'s','quote':secret}]}]}
+            async with Client(AuthenticatedTransport(self.settings.resource_url,self.token()),cache=None) as client:
+                with self.assertLogs('atlasai.mcp',level='INFO') as captured:
+                    result=await client.call_tool('update_information',body)
+            self.assertTrue(result.is_error)
+            details=result.structured_content['error']['details']
+            self.assertEqual(details['expected_schema_version'],'2.0')
+            self.assertIn({'path':['schema_version'],'code':'literal_error'},details['validation_errors'])
+            self.assertTrue(any('expected_version' in e['path'] and e['code']=='int_type' for e in details['validation_errors']))
+            self.assertNotIn(secret,json.dumps(result.model_dump()))
+            self.assertNotIn(secret,'\n'.join(captured.output))
+            self.assertIn('argument_validation_failed','\n'.join(captured.output))
         asyncio.run(run())
 
     def test_request_limit_and_origin_host_guards(self):

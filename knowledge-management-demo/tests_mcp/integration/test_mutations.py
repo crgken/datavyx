@@ -44,6 +44,22 @@ class MutationTests(unittest.TestCase):
     def total(self):return self.query.query_records(self.scope,QueryInput(operation='SUM',predicate='amount',unit='USD'))['sum']
     def state(self):return self.repo.transaction(lambda tx:[dict(r['n']) for r in tx.run('MATCH (n {dataset:$d}) RETURN properties(n) AS n ORDER BY n.id',d=self.scope.dataset)])
 
+    def test_inherited_unit_accepts_the_exact_observed_label(self):
+        data=self.correction();data['changes'][0]['replacements'][0]['value']['unit']='USD'
+        receipt=self.update(data)
+        self.assertEqual((receipt['objects_changed'],receipt['revision']),(1,2))
+        self.assertEqual(self.total(),'65')
+        current=self.read.get_record(self.scope,GetInput(entity_id=self.oid))
+        self.assertEqual(current['object']['version'],2)
+        self.assertEqual(current['facts']['rows'][0]['value']['unit'],'USD')
+
+    def test_inherited_unit_mismatch_rolls_back_without_new_source_or_receipt(self):
+        before=self.state();data=self.correction();data['changes'][0]['replacements'][0]['value']['unit']='CNY'
+        with self.assertRaises(KnowledgeError) as error:self.update(data)
+        self.assertEqual(error.exception.code,'UNIT_INHERITANCE_MISMATCH')
+        self.assertEqual(self.state(),before)
+        self.assertEqual(self.total(),'0.1')
+
     def test_correction_replaces_current_value_without_new_entity_or_conflict(self):
         receipt=self.update(self.correction());OperationReceipt.model_validate(receipt)
         self.assertEqual((receipt['objects_changed'],receipt['facts_changed'],receipt['revision']),(1,2,2))

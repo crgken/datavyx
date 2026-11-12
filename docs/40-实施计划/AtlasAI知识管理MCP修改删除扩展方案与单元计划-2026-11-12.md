@@ -12,6 +12,7 @@ Agent 负责理解意图、查找真实目标和生成结构化参数；后端�
 
 - 修改动作包括 replace_fact、replace_slot、set_entity_fields、replace_relation。目标 ID 和当前版本来自真实读取；replace_slot 携带完整当前事实 ID 集合。名称/别名/编号/命名空间可改，对象 ID 不变，kind 不可改；身份键重算且唯一性检查在同一事务中。
 - 新工具 schema_version=2.0；旧新增/读取的1.0契约兼容。修改指令来源与新值引用逐字检查，不收集完整聊天历史。仅改金额可显式继承旧事实单位，更换币种必须有明确来源且不换算。
+- M08实测契约细化：inherit_unit=true时unit可为空串或回传真实旧单位的完全相同标签；事务内核对唯一旧单位，不接受不同标签，不接收新unit_quotes，不转换币种。schema错误返回最多8个公开字段路径/错误类型和预期版本；未知字段名脱敏，参数值及原文不进入日志或错误详情。
 - 更正保留调用者明确的asserted/estimated/uncertain资格；不能把估计更正强制变成精确。兼容既有boolean规范值，用严格布尔标量，不把字符串/0/1当布尔。等价CLDR币种标签在更正校验后沿用既有标签，避免人民币/CNY分裂同一槽的统计；新增同类记录优先复用目录中的既有单位标签。
 - find_records 增加结构化 selection 读取：资源类别、ID/类型/命名空间/谓词/受限事实筛选、生命周期、完整数量、revision、范围摘要。统计 COUNT 的资格口径不能冒充删除目标数量；分页不截断目标总体。该读取不产生执行计划、确认 token 或审批状态。
 - 删除/清除请求绑定 selection、expected_revision、expected_count、selection_digest；同事务重新解析并核对，匹配不全、越权、范围变化或超限时整笔拒绝。workspace 范围只含规范业务对象/事实/来源，不含成员/配置/数据库结构；普通空间清空包括归档及 source_only。

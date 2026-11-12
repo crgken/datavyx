@@ -34,15 +34,15 @@ class Mutation(V2):
 class Replacement(StrictModel):
     value: Value | None = None
     object_id: Identifier | None = None
-    inherit_unit: bool = False
+    inherit_unit: bool = Field(default=False,description='For number corrections, inherit the actual current unit without conversion. value.unit may be empty or exactly the stored label; no new unit_quotes. A different nonempty label is rejected in the transaction.')
     certainty: Literal['asserted','estimated','uncertain'] = 'asserted'
     quotes: list[Quote] = Field(min_length=1,max_length=8)
 
     @model_validator(mode='after')
     def exactly_one(self):
         if (self.value is None)==(self.object_id is None):raise ValueError('Exactly one value or object_id is required.')
-        if self.inherit_unit and not (isinstance(self.value,NumberValue) and self.value.unit=='' and not self.value.unit_quotes):
-            raise ValueError('Inherited units require a number with empty unit and no new unit quotes.')
+        if self.inherit_unit and not (isinstance(self.value,NumberValue) and not self.value.unit_quotes):
+            raise ValueError('Inherited units require a number and no new unit quotes; the unit must be empty or match the current stored label.')
         return self
 
 

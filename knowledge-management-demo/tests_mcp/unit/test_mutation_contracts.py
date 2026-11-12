@@ -31,8 +31,10 @@ class MutationContractTests(unittest.TestCase):
                 'fields':fields,'quotes':[{'source_ref':'s','quote':'Alpha'}]}]
             with self.subTest(fields=fields),self.assertRaises(ValidationError):UpdateInput.model_validate(data)
 
-    def test_inherited_unit_cannot_supply_new_unit(self):
+    def test_inherited_unit_can_echo_a_label_but_cannot_supply_new_evidence(self):
         data=update();data['changes'][0]['replacements'][0]['value']['unit']='CNY'
+        self.assertEqual(UpdateInput.model_validate(data).changes[0].replacements[0].value.unit,'CNY')
+        data['changes'][0]['replacements'][0]['value']['unit_quotes']=[{'source_ref':'s','quote':'65'}]
         with self.assertRaises(ValidationError):UpdateInput.model_validate(data)
 
     def test_selection_is_typed_and_complete(self):

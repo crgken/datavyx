@@ -48,7 +48,8 @@ the exact generated `mcp-test-*` datasets.
 
 Reuse the existing Auth0 tenant/subjects, not its SPA credentials or API keys.
 Configure a dedicated MCP API resource and `knowledge:read` / `knowledge:record`
-permissions; the canonical resource URL and intended token audience must match
+plus update/delete/restore/history/purge/bulk permissions (each with `knowledge:`);
+the canonical resource URL and intended token audience must match
 in production. Allowlist the actual ChatGPT OAuth client, and copy its actual
 callback URI rather than inventing a fixed one.
 
@@ -79,6 +80,9 @@ limits, not a claim of unlimited graph scalability.
 
 Tool diagnostics contain a generated trace ID, fixed tool name, error code,
 duration and exception class, without source text, request bodies, tokens,
-passwords or raw exception messages. Access logs are disabled. Unexpected save
+passwords or raw exception messages. Schema failures also expose at most eight
+schema-owned field paths and error codes plus the expected schema version;
+unknown input keys are redacted, and values/context/exception messages are omitted.
+Access logs are disabled. Unexpected save
 errors require receipt lookup; a reconnect must retain the request ID/body.
 See [deterministic semantics](SEMANTICS.md) for population, conflict and unit rules.

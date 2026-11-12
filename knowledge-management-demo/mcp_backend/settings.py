@@ -23,6 +23,7 @@ class Settings:
     organization: str = ''
     recording_enabled: bool = False
     recording_actors: tuple[str, ...] = ()
+    purge_ledger_dir: str = ''
 
     def __post_init__(self):
         uri = urlsplit(self.uri)
@@ -64,7 +65,8 @@ class Settings:
                 host=os.getenv('MCP_HOST','127.0.0.1'),port=int(os.getenv('MCP_PORT','8098')),
                 mode=os.getenv('MCP_MODE','production'),max_records=int(os.getenv('MCP_MAX_RECORDS','10000')),
                 organization=os.getenv('MCP_AUTH_ORGANIZATION',''), recording_enabled=recording=='1',
-                recording_actors=tuple(s.strip() for s in os.getenv('MCP_RECORDING_ACTORS','').split(',') if s.strip()))
+                recording_actors=tuple(s.strip() for s in os.getenv('MCP_RECORDING_ACTORS','').split(',') if s.strip()),
+                purge_ledger_dir=os.getenv('MCP_PURGE_LEDGER_DIR',''))
         except (KeyError, ValueError):
             from .errors import KnowledgeError
             raise KnowledgeError('INVALID_CONFIGURATION','Required MCP configuration is missing or invalid.') from None

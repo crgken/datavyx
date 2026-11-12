@@ -3,7 +3,8 @@ from ..domain import digest
 from ..errors import require
 
 
-LABELS = ('KDObject', 'KDFact', 'KDSource', 'KDData', 'KDWorkspace', 'KDWorkspaceMember', 'KDMCPRequest', 'KDMCPMigration')
+LABELS = ('KDObject', 'KDFact', 'KDSource', 'KDData', 'KDWorkspace', 'KDWorkspaceMember', 'KDMCPRequest', 'KDMCPMigration',
+          'KDMCPChange','KDMCPPurgeLedger')
 EDGES = {'KD_SUPPORTS': {('KDSource', 'KDObject'), ('KDSource', 'KDFact')},
          'KD_HAS_FACT': {('KDObject', 'KDFact')}, 'KD_TARGET': {('KDFact', 'KDObject')}}
 

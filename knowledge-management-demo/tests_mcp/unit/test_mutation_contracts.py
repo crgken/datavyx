@@ -1,7 +1,7 @@
 import unittest
 from pydantic import ValidationError
 from mcp_backend.contracts import FindInput,TargetSelection
-from mcp_backend.mutation_contracts import UpdateInput,SelectionMutation,HistoryInput,MUTATION_INPUTS
+from mcp_backend.mutation_contracts import UpdateInput,SelectionMutation,HistoryInput,PurgeInput,MUTATION_INPUTS
 
 
 def update():
@@ -50,3 +50,9 @@ class MutationContractTests(unittest.TestCase):
         HistoryInput(entity_id='o')
         for args in ({},{'entity_id':'o','source_id':'s'},{'entity_id':'o','limit':101}):
             with self.subTest(args=args),self.assertRaises(ValidationError):HistoryInput(**args)
+
+    def test_purge_requires_opaque_uuid_not_a_content_bearing_key(self):
+        body=update();body.pop('changes');body.update(selection={'resource':'workspace','state':'all'},
+            expected_revision=0,expected_count=0,selection_digest='a'*64)
+        with self.assertRaises(ValidationError):PurgeInput.model_validate(body)
+        body['request_id']='ef6fab60-6808-4df1-af21-f7ee92d8670c';PurgeInput.model_validate(body)

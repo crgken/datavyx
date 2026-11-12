@@ -216,7 +216,7 @@ class TargetSelection(StrictModel):
     subject_id: Identifier | None = None
     predicate: str = Field(default='', max_length=100)
     filters: list[Filter] = Field(default_factory=list, max_length=8)
-    state: Literal['present', 'deleted'] = 'present'
+    state: Literal['present', 'deleted', 'all'] = 'present'
 
     @model_validator(mode='after')
     def compatible(self):
@@ -225,7 +225,7 @@ class TargetSelection(StrictModel):
             raise ValueError('Entity filters require entity selection.')
         if self.resource != 'fact' and (self.subject_id or self.predicate):
             raise ValueError('Fact filters require fact selection.')
-        if self.resource == 'workspace' and (self.ids or self.state != 'present'):
+        if self.resource == 'workspace' and (self.ids or self.state not in {'present','all'}):
             raise ValueError('Workspace selection covers all present canonical resources.')
         return self
 
@@ -325,6 +325,8 @@ class OperationReceipt(StrictModel):
     selection_complete: Literal[True] = True
     idempotent: bool = False
     current_state: Literal['current','changed','restored'] = 'current'
+    target_counts: dict[Literal['entity','fact','source'],Annotated[int,Field(ge=0)]] = Field(default_factory=dict)
+    removed_counts: dict[Literal['entity','fact','source'],Annotated[int,Field(ge=0)]] = Field(default_factory=dict)
 
 
 class PurgedReceipt(StrictModel):

@@ -27,10 +27,10 @@ class Repository:
 
     def close(self):self.driver.close()
 
-    def transaction(self,fn):
+    def transaction(self,fn,metadata=None):
         try:
             with self.driver.session(database=self.settings.database) as session:
-                with session.begin_transaction(timeout=20) as tx:
+                with session.begin_transaction(timeout=20,metadata=metadata) as tx:
                     result=fn(tx)
                     tx.commit()
                     return result
@@ -73,13 +73,16 @@ class Repository:
         row=tx.run('MATCH (d:KDData {id:$d}) RETURN coalesce(d.revision,0) AS revision',d=dataset).single()
         return row['revision'] if row else 0
 
-    def scoped(self,scope,fn,permission='read'):
+    def scoped(self,scope,fn,permission='read',metadata=None):
         def run(tx):
             self.authorize(tx,scope,permission)
             revision=self.revision(tx,scope.dataset,write=True)
             self.authorize(tx,scope,permission)
+            from .purge_ledger import PurgeLedger
+            allowed=(metadata or {}).get('mcp_operation') if (metadata or {}).get('mcp_operation_type')=='purge' else None
+            PurgeLedger(self.settings).check(tx,scope.dataset,allowed)
             return fn(tx,revision)
-        return self.transaction(run)
+        return self.transaction(run,metadata)
 
     def snapshot(self,tx,scope):
         limit=self.settings.max_records+1

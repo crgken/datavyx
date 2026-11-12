@@ -10,16 +10,22 @@ LABELS={'entity':'KDObject','fact':'KDFact','source':'KDSource'}
 
 
 def select_targets(repo,tx,scope,selection):
-    if selection.state=='deleted':repo.authorize(tx,scope,'history')
+    if selection.state!='present':repo.authorize(tx,scope,'history')
     objects,facts=repo.snapshot(tx,scope)
-    sources=[dict(r['s']) for r in tx.run("MATCH (s:KDSource {dataset:$d}) WHERE coalesce(s.record_state,'active')<>'action_draft' RETURN properties(s) AS s LIMIT $n",d=scope.dataset,n=repo.settings.max_records+1)]
+    if selection.state=='all':
+        # Explicit historical erasure covers old canonical proposal bodies too;
+        # it never activates or executes a historical proposal.
+        objects={r['n']['id']:dict(r['n']) for r in tx.run('MATCH (n:KDObject {dataset:$d}) RETURN properties(n) AS n LIMIT $n',d=scope.dataset,n=repo.settings.max_records+1)}
+        facts=[dict(r['n']) for r in tx.run('MATCH (n:KDFact {dataset:$d}) RETURN properties(n) AS n LIMIT $n',d=scope.dataset,n=repo.settings.max_records+1)]
+        require(max(len(objects),len(facts))<=repo.settings.max_records,'LIMIT_EXCEEDED','Historical selection exceeds its resource limit.',413)
+    sources=[dict(r['s']) for r in tx.run("MATCH (s:KDSource {dataset:$d}) WHERE $history OR coalesce(s.record_state,'active')<>'action_draft' RETURN properties(s) AS s LIMIT $n",d=scope.dataset,n=repo.settings.max_records+1,history=selection.state=='all')]
     require(len(sources)<=repo.settings.max_records,'LIMIT_EXCEEDED','Source selection exceeds the resource limit.',413)
     pools={'entity':list(objects.values()),'fact':facts,'source':sources}
-    reasons=eligibility(objects,facts)
+    reasons=eligibility(objects,facts) if selection.filters else {}
     selected=[]
     for resource in LABELS if selection.resource=='workspace' else [selection.resource]:
         for row in pools[resource]:
-            if bool(row.get('deleted_by')) != (selection.state=='deleted'):continue
+            if selection.state!='all' and bool(row.get('deleted_by')) != (selection.state=='deleted'):continue
             if selection.ids and row['id'] not in selection.ids:continue
             if selection.state=='present':
                 if resource=='fact' and not current_fact(row,objects):continue

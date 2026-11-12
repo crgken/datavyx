@@ -27,3 +27,11 @@ def cleanup(repo,*scopes):
         assert scope.dataset.startswith('mcp-test-')
         repo.transaction(lambda tx:tx.run('MATCH (n) WHERE n.dataset=$d OR (n:KDData AND n.id=$d) '
             'DETACH DELETE n',d=scope.dataset).consume())
+        from mcp_backend.purge_ledger import PurgeLedger
+        from mcp_backend.domain import digest
+        root=PurgeLedger(repo.settings).root(scope.dataset)
+        if root:
+            # Only this synthetic scope's regular files inside its verified ledger root.
+            for path in root.glob(digest(scope.dataset)+'-*'):
+                assert path.resolve().is_relative_to(root.resolve()) and not path.is_symlink() and path.is_file()
+                path.unlink()

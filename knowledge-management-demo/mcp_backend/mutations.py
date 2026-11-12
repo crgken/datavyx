@@ -10,6 +10,11 @@ from .errors import require
 from .ingestion import Ingestion,request_key
 from .lifecycle import present,current_fact,operation_state
 from .paging import Pager
+from .purge_ledger import PurgeLedger
+from .erasure import related_events,read_events,erase_content
+from collections import Counter
+import hashlib
+import hmac
 from .selection import LABELS,select_targets
 
 
@@ -18,7 +23,9 @@ class Mutations:
 
     def _execute(self,scope,data,operation,apply):
         rid=request_key(scope,data.request_id)
-        fingerprint=digest([operation,data.model_dump(exclude={'workspace_id'})])
+        body=[operation,data.model_dump(exclude={'workspace_id'})]
+        fingerprint=(hmac.new(self.repo.settings.cursor_secret.encode(),encoded(body).encode(),hashlib.sha256).hexdigest()
+                     if operation=='purge' else digest(body))
         def run(tx,revision):
             previous=tx.run('MATCH (r:KDMCPRequest {dataset:$d,id:$id}) RETURN properties(r) AS r',
                             d=scope.dataset,id=rid).single()
@@ -36,6 +43,7 @@ class Mutations:
                 'objects':objects,'facts':{f['id']:f for f in facts},'versions':{i:o.get('version',1) for i,o in objects.items()},
                 'source_ids':{s.ref:uuid4().hex for s in data.sources},'sources_created':False,
                 'changed':{'entity':set(),'fact':set(),'source':set()},'touched':set(),
+                'target_counts':{},'removed_counts':{},
                 'matched':0,'applied':0,'relations_hidden':0,'now':time.time()}
             apply(tx,ctx)
             changed=any(ctx['changed'].values())
@@ -47,7 +55,8 @@ class Mutations:
                 'sources_changed':len(ctx['changed']['source']),
                 'sources_recorded':int(ctx['sources_created'])*len(data.sources),
                 'relations_hidden':ctx['relations_hidden'],'recoverable':operation=='delete',
-                'selection_complete':True,'idempotent':False,'current_state':'current'}
+                'selection_complete':True,'idempotent':False,'current_state':'current',
+                'target_counts':ctx['target_counts'],'removed_counts':ctx['removed_counts']}
             versions=[]
             for resource,label in LABELS.items():
                 versions.extend({'label':label,'id':r['id'],'version':r['version']} for r in tx.run(
@@ -63,7 +72,9 @@ class Mutations:
             if changed:
                 tx.run('MATCH (d:KDData {id:$d}) SET d.revision=$revision',d=scope.dataset,revision=after).consume()
             return receipt
-        return self.repo.scoped(scope,run,operation)
+        result=self.repo.scoped(scope,run,operation,{'mcp_operation':rid,'mcp_operation_type':operation})
+        if operation=='purge' and result['status']=='applied':PurgeLedger(self.repo.settings).confirm(scope.dataset,rid)
+        return result
 
     def _ensure_sources(self,tx,ctx):
         if ctx['sources_created'] or ctx['operation']=='purge':return
@@ -100,6 +111,7 @@ class Mutations:
 
     def _update(self,tx,ctx):
         scope=ctx['scope'];data=ctx['data'];ctx['matched']=len(data.changes)
+        ctx['target_counts']={'entity':len({c.entity_id for c in data.changes})}
         for change in data.changes:
             obj=ctx['objects'].get(change.entity_id)
             require(obj and present(obj),'INVALID_REFERENCE','The target object is unavailable.',409)
@@ -201,6 +213,7 @@ class Mutations:
                 'The complete target range or count differs from the supplied selection.',409)
         if len(targets)>1 or data.selection.resource=='workspace':self.repo.authorize(tx,scope,'bulk')
         ctx['matched']=len(targets)
+        ctx['target_counts']=dict(Counter(t['resource'] for t in targets))
         return targets
 
     def _source_dependencies(self,tx,ctx,source_ids,entity_ids,fact_ids):
@@ -272,6 +285,7 @@ class Mutations:
         require(len(changes)<=1000,'LIMIT_EXCEEDED','This restoration exceeds the atomic limit.',413)
         if len(changes)>1:self.repo.authorize(tx,scope,'bulk')
         ctx['matched']=len(changes);restore=[]
+        ctx['target_counts']=dict(Counter(e['resource'] for e in changes))
         for event in changes:
             resource=event['resource'];label=LABELS[resource]
             target=tx.run(f'MATCH (n:{label} {{dataset:$d,id:$id}}) RETURN properties(n) AS n',d=scope.dataset,id=event['target_id']).single()
@@ -322,3 +336,43 @@ class Mutations:
             public=[{k:v for k,v in row.items() if k not in {'dataset','payload'}}|json.loads(row['payload']) for row in rows]
             return {**Pager(self.repo.settings.cursor_secret).page(public,scope,revision,data,'history',data.cursor),'schema_version':'2.0'}
         return self.repo.scoped(scope,read,'history')
+
+    def purge_information(self,scope,data):
+        return self._execute(scope,data,'purge',self._purge)
+
+    def _purge(self,tx,ctx):
+        targets=self._selection(tx,ctx);scope=ctx['scope'];selection=ctx['data'].selection
+        require(selection.state=='all','INCOMPLETE_SCOPE','Permanent erasure requires a full historical selection (state=all).',409)
+        if not targets:return
+        entities={t['id'] for t in targets if t['resource']=='entity'}
+        facts={t['id'] for t in targets if t['resource']=='fact'}
+        sources={t['id'] for t in targets if t['resource']=='source'}
+        facts.update(r['id'] for r in tx.run('MATCH (f:KDFact {dataset:$d}) '
+            'WHERE f.subject_id IN $objects OR f.object_id IN $objects RETURN f.id AS id',d=scope.dataset,objects=sorted(entities)))
+        bound=entities|facts
+        sources.update(r['id'] for r in tx.run('MATCH (s:KDSource {dataset:$d})-[:KD_SUPPORTS]->(n) '
+            'WHERE n.id IN $ids RETURN DISTINCT s.id AS id',d=scope.dataset,ids=sorted(bound)))
+        events,sources=related_events(read_events(self.repo,tx,scope.dataset),
+            {'entity':entities,'fact':facts,'source':sources})
+        # Shared raw blobs and shared instruction sources cannot be partly erased
+        # without rewriting evidence. Refuse any external dependency, even historical.
+        for row in tx.run('MATCH (s:KDSource {dataset:$d})-[:KD_SUPPORTS]->(n) '
+            'WHERE s.id IN $sources RETURN n.id AS id',d=scope.dataset,sources=sorted(sources)):
+            require(row['id'] in bound,'SOURCE_DEPENDENCY','A shared source supports a record outside the erasure range.',409)
+        event_ids={e['id'] for e in events}
+        outside=tx.run('MATCH (e:KDMCPChange {dataset:$d}) WHERE any(s IN e.source_ids WHERE s IN $sources) '
+            'AND NOT e.id IN $events RETURN count(e) AS n',d=scope.dataset,sources=sorted(sources),events=sorted(event_ids)).single()['n']
+        require(outside==0,'SOURCE_DEPENDENCY','A shared instruction source supports history outside the erasure range.',409)
+        resources={'entity':sorted(entities),'fact':sorted(facts),'source':sorted(sources)}
+        require(sum(map(len,resources.values()))<=3*self.repo.settings.max_records,'LIMIT_EXCEEDED','Erasure exceeds the atomic resource limit.',413)
+        ledger=PurgeLedger(self.repo.settings);manifest=ledger.prepare(scope.dataset,ctx['rid'],resources)
+        # After this durable intent exists, failures remain fail-closed until retry
+        # or administrative reconciliation proves the transaction outcome.
+        neighbours={oid for f in ctx['facts'].values() if f['id'] in facts
+                    for oid in (f.get('subject_id'),f.get('object_id')) if oid and oid not in entities}
+        self._touch(tx,ctx,neighbours)
+        erase_content(tx,scope.dataset,resources,events)
+        for resource in LABELS:ctx['changed'][resource].update(resources[resource])
+        tx.run('CREATE (p:KDMCPPurgeLedger) SET p=$p',p={'id':ctx['rid'],'dataset':scope.dataset,
+            'plan_digest':manifest['plan_digest'],'resources':encoded(resources),'created_at':ctx['now']}).consume()
+        ctx['removed_counts']={r:len(ids) for r,ids in resources.items()};ctx['applied']=len(targets)

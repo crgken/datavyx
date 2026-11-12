@@ -104,6 +104,11 @@ class RestoreInput(Mutation):
     expected_revision: int = Field(ge=0)
 
 
+class PurgeInput(SelectionMutation):
+    request_id: str = Field(pattern=r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+        description='Use a random UUID, never a name or content-bearing request ID. Purge audit retains only opaque identifiers.')
+
+
 class HistoryInput(V2):
     entity_id: Identifier | None = None
     source_id: Identifier | None = None
@@ -123,6 +128,6 @@ class HistoryResult(PageResult):
 
 
 MUTATION_INPUTS={'update_information':UpdateInput,'delete_information':SelectionMutation,
-                 'restore_information':RestoreInput,'purge_information':SelectionMutation,
+                 'restore_information':RestoreInput,'purge_information':PurgeInput,
                  'get_history':HistoryInput}
 MUTATION_OUTPUTS={name:HistoryResult if name=='get_history' else OperationReceipt for name in MUTATION_INPUTS}

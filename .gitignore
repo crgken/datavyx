@@ -4,6 +4,8 @@
 /deploy/*
 !/deploy/deploy-lightsail.ps1
 !/deploy/atlasai-apply-release.sh
+!/deploy/prepare-mcp-release.py
+!/deploy/backup-mcp-release.py
 !/deploy/README.md
 !/deploy/openai-model.env.example
 !/deploy/mcp/

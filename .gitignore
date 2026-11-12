@@ -6,6 +6,7 @@
 !/deploy/atlasai-apply-release.sh
 !/deploy/prepare-mcp-release.py
 !/deploy/backup-mcp-release.py
+!/deploy/migrate-mcp-release.py
 !/deploy/README.md
 !/deploy/openai-model.env.example
 !/deploy/mcp/

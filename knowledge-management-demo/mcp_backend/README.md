@@ -2,6 +2,10 @@
 
 Development branch: `codex/mcp-neo4j`. Current unit status is in
 [the progress record](../../docs/50-运行记录/MCP改造开发进度-2026-11-12.md).
+The approved mutation extension and its actual status are in
+[M00–M09 progress](../../docs/50-运行记录/MCP修改删除开发进度-2026-11-12.md).
+Twelve tools include versioned corrections, recoverable deletion/restoration,
+authorized history and separately scoped irreversible erasure. There is no approval tool.
 This package never imports `demo` or initializes its Agent, approval or Graphiti workers.
 
 ## Environment

@@ -11,6 +11,7 @@ case "$archive" in /home/ubuntu/atlasai-deploy/mcp/release-*.tar) ;; *) echo "Un
 helper=$(realpath -e -- "$(dirname -- "$0")/release_artifact.py")
 config=/etc/atlasai/mcp-candidate.env
 test -f "$config"
+install -d -o ubuntu -g ubuntu -m 0700 /var/lib/atlasai-mcp/candidate-purge-ledger
 [[ $(stat -c %a "$config") == 600 && $(stat -c %U "$config") == root ]] || { echo "Config must be root-owned mode 600" >&2; exit 2; }
 release="/opt/atlasai-mcp/candidates/$3"
 python3 "$helper" verify "$archive" --sha256 "$2" --commit "$3"

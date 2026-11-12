@@ -50,5 +50,8 @@ class SettingsTests(unittest.TestCase):
         self.assertIn('configuration_valid',result.stdout)
         self.assertNotIn(env['MCP_CURSOR_SECRET'],result.stdout)
 
+    def test_production_cannot_omit_the_external_erasure_boundary(self):
+        with self.assertRaises(KnowledgeError):settings(mode='production',password='test-only',resource_url='https://mcp.example/mcp')
+
 
 if __name__=='__main__':unittest.main()

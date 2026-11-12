@@ -31,6 +31,7 @@ if [[ "$action" != rollback ]]; then
 fi
 case "$action" in
 prepare)
+  install -d -o ubuntu -g ubuntu -m 0700 /var/lib/atlasai-mcp/purge-ledger
   [[ ! -e "$state" ]] || { echo "Preparation already recorded; inspect/reuse it" >&2; exit 2; }
   python3 "$release/deploy/mcp/run_env.py" --env "$config" --python "$backend/.venv-mcp/bin/python" --backend "$backend" --production-closed --action check-config
   umask 077

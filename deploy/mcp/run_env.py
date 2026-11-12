@@ -35,12 +35,14 @@ def main():
             and values.get('MCP_NEO4J_URI') == 'bolt://127.0.0.1:17694'
             and values.get('MCP_PORT') == '8098'
             and values.get('MCP_RESOURCE_URL') == 'https://kb.datavyx.com/mcp-candidate'
+            and values.get('MCP_PURGE_LEDGER_DIR') == '/var/lib/atlasai-mcp/candidate-purge-ledger'
             and values.get('MCP_AUTH_AUDIENCE') == values.get('MCP_RESOURCE_URL')):
             raise ValueError('Candidate configuration must use its isolated resource, port and database.')
         if args.production_closed and not (values.get('MCP_MODE') == 'production'
             and values.get('MCP_NEO4J_URI') == 'bolt://127.0.0.1:17693'
             and values.get('MCP_PORT') == '8099'
             and values.get('MCP_RESOURCE_URL') == 'https://kb.datavyx.com/mcp'
+            and values.get('MCP_PURGE_LEDGER_DIR') == '/var/lib/atlasai-mcp/purge-ledger'
             and values.get('MCP_AUTH_AUDIENCE') == values.get('MCP_RESOURCE_URL')
             and values.get('MCP_RECORDING_ENABLED', '0') == '0'):
             raise ValueError('Production preparation requires the canonical resource and closed recording.')

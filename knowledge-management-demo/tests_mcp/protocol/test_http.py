@@ -16,8 +16,10 @@ from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
 import uvicorn
 from mcp_backend.auth import Authentication
-from mcp_backend.contracts import TOOL_INPUTS
-from mcp_backend.server import create_app
+from mcp_backend.server import create_app,TOOL_INPUTS,WRITES,DESTRUCTIVE
+from mcp_backend.permissions import PERMISSIONS
+from uuid import uuid4
+from tests_mcp.integration.test_mutations import instruction
 from mcp_backend.neo4j_repository import Repository
 from tests_mcp.integration.test_ingestion import sample
 from tests_mcp.support import test_settings, workspace, cleanup
@@ -95,7 +97,7 @@ class HTTPProtocolTests(unittest.TestCase):
         metadata = json.loads(raw)
         self.assertEqual(metadata['resource'], self.settings.resource_url)
         self.assertEqual(metadata['authorization_servers'], [self.settings.issuer])
-        self.assertEqual(set(metadata['scopes_supported']), {'knowledge:read', 'knowledge:record'})
+        self.assertEqual(set(metadata['scopes_supported']), {'knowledge:'+p for p in PERMISSIONS})
 
     def test_real_protocol_tools_and_complete_save_query_source_receipt(self):
         async def run():
@@ -104,8 +106,8 @@ class HTTPProtocolTests(unittest.TestCase):
                 self.assertEqual({t.name for t in listed.tools}, set(TOOL_INPUTS))
                 for tool in listed.tools:
                     self.assertEqual(tool.input_schema, TOOL_INPUTS[tool.name].model_json_schema())
-                    self.assertEqual(tool.annotations.read_only_hint, tool.name != 'record_information')
-                    self.assertFalse(tool.annotations.destructive_hint)
+                    self.assertEqual(tool.annotations.read_only_hint, tool.name not in WRITES)
+                    self.assertEqual(tool.annotations.destructive_hint,tool.name in DESTRUCTIVE)
                     self.assertEqual(tool.meta['securitySchemes'][0]['type'], 'oauth2')
                 context = await client.call_tool('get_context', {'workspace_id': self.scope.workspace_id})
                 self.assertFalse(context.is_error)
@@ -132,7 +134,7 @@ class HTTPProtocolTests(unittest.TestCase):
     def test_legacy_initialize_handshake_is_supported(self):
         async def run():
             async with Client(AuthenticatedTransport(self.settings.resource_url, self.token()), mode='legacy', cache=None) as client:
-                self.assertEqual(len((await client.list_tools()).tools), 7)
+                self.assertEqual(len((await client.list_tools()).tools), 12)
                 result = await client.call_tool('get_context', {'workspace_id': self.scope.workspace_id})
                 self.assertFalse(result.is_error)
         asyncio.run(run())
@@ -155,6 +157,52 @@ class HTTPProtocolTests(unittest.TestCase):
             status, headers, body = self.request('/mcp', b'{}', {'Content-Type': 'application/json', 'Authorization': 'Bearer '+token})
             self.assertEqual(status, 401); self.assertNotIn(token.encode(), body)
             self.assertIn('resource_metadata=', headers['WWW-Authenticate'])
+
+    def test_new_mutations_over_real_http_and_purged_requests_cannot_recreate_content(self):
+        async def run():
+            token=self.token(scope=' '.join('knowledge:'+p for p in sorted(PERMISSIONS)))
+            async with Client(AuthenticatedTransport(self.settings.resource_url,token),cache=None) as client:
+                async def call(name,body):
+                    result=await client.call_tool(name,{'workspace_id':self.scope.workspace_id,**body})
+                    self.assertFalse(result.is_error,str(result.structured_content));return result.structured_content
+                data=sample();saved=await call('record_information',data);oid=saved['entity_ids']['a']
+                correction={**instruction('http-correction-001',text='Change amount to 65.'),'changes':[{
+                    'action':'replace_fact','entity_id':oid,'expected_version':1,'predicate':'amount','fact_ids':saved['fact_ids'],
+                    'quotes':[{'source_ref':'s','quote':'65'}],'replacements':[{'value':{'type':'number','decimal':'65','unit':''},
+                        'inherit_unit':True,'quotes':[{'source_ref':'s','quote':'65'}]}]}]}
+                await call('update_information',correction)
+                selection={'resource':'entity','ids':[oid]}
+                matched=await call('find_records',{'selection':selection})
+                deleted=await call('delete_information',{**instruction('http-delete-001'),'selection':selection,
+                    'expected_revision':matched['revision'],'expected_count':matched['selection_count'],'selection_digest':matched['selection_digest']})
+                await call('restore_information',{**instruction('http-restore-001'),'delete_receipt_id':deleted['receipt_id'],
+                    'expected_revision':deleted['revision']})
+                history=await call('get_history',{'entity_id':oid});self.assertEqual(history['total'],3)
+                selection['state']='all';matched=await call('find_records',{'selection':selection})
+                purged=await call('purge_information',{**instruction(str(uuid4())),'selection':selection,
+                    'expected_revision':matched['revision'],'expected_count':matched['selection_count'],
+                    'selection_digest':matched['selection_digest']})
+                self.assertEqual(purged['removed_counts']['entity'],1)
+                old=await call('get_receipt',{'request_id':data['request_id']});self.assertEqual(old['receipt']['status'],'purged')
+                replay=await client.call_tool('record_information',{'workspace_id':self.scope.workspace_id,**data})
+                self.assertTrue(replay.is_error);self.assertEqual(replay.structured_content['error']['code'],'PREVIOUSLY_PURGED')
+        asyncio.run(run())
+
+    def test_missing_new_scope_requests_the_correct_scope_but_role_denial_does_not_reauthorize(self):
+        async def run():
+            body={**instruction('http-denied-001',text='Rename Alpha.'),'changes':[{
+                'action':'set_entity_fields','entity_id':'not-a-real-target','expected_version':1,'fields':{'name':'Alpha'},
+                'quotes':[{'source_ref':'s','quote':'Alpha'}]}]}
+            async with Client(AuthenticatedTransport(self.settings.resource_url,self.token()),cache=None) as client:
+                result=await client.call_tool('update_information',{'workspace_id':self.scope.workspace_id,**body})
+                self.assertTrue(result.is_error);self.assertIn('knowledge:update',result.meta['mcp/www_authenticate'][0])
+            self.repo.transaction(lambda tx:tx.run('MATCH (m:KDWorkspaceMember {workspace_id:$d}) SET m.role="viewer"',d=self.scope.dataset).consume())
+            token=self.token(scope=' '.join('knowledge:'+p for p in sorted(PERMISSIONS)))
+            async with Client(AuthenticatedTransport(self.settings.resource_url,token),cache=None) as client:
+                result=await client.call_tool('update_information',{'workspace_id':self.scope.workspace_id,**body})
+                self.assertTrue(result.is_error);self.assertEqual(result.structured_content['error']['code'],'PERMISSION_DENIED')
+                self.assertFalse(result.meta and result.meta.get('mcp/www_authenticate'))
+        asyncio.run(run())
 
     def test_request_limit_and_origin_host_guards(self):
         headers = {'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream',

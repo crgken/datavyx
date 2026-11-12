@@ -1,5 +1,11 @@
 # MCP 候选与正式发布操作边界
 
+M00–M09扩展：当前实现有12工具，新scope为update/delete/restore/history/purge/bulk；实际候选状态看扩展进度。普通业务直接执行无审批；开发与正式切换授权边界保留。MCP_RECORDING_ENABLED屏障覆盖所有新写工具。
+
+永久清除清单必须持久保存在数据库卷/不可变发布目录之外：候选`/var/lib/atlasai-mcp/candidate-purge-ledger`，正式`/var/lib/atlasai-mcp/purge-ledger`。服务账号ubuntu、目录0700/文件0600，systemd只开放对应ReadWritePaths；MCP_PURGE_LEDGER_DIR必须显式匹配。升级/回滚不得覆盖或清空该目录。首次升级旧候选安装器前先创建目录并更新受保护配置；后续新安装器会准备目录。
+
+`python -m scripts.mcp_erasure_recovery --dataset EXACT --action audit|reconcile|apply`为管理恢复入口，不是MCP工具。reconcile核对DB提交标记、至少120秒间隔及无活动事务后才能将未知意图判为aborted；apply拒绝prepared并重放committed清单。正式reconcile/apply要求授权commit与ATLASAI_RELEASE_AUTHORIZED_COMMIT一致、可信安装清单、正式库17693、关闭新增和停旧API。DB备份必须同时记录外部清单边界；恢复后先处理清单再开放任何知识读取。删除/清除后不能切回不理解生命周期的v1候选或旧卷来覆盖数据。
+
 这是新的 MCP 专用发布入口。旧 deploy-lightsail.ps1 / atlasai-apply-release.sh 继续保留历史用途，本次不调用；不构建 Flutter，不重新处理网页资产，不安装旧 requirements 或启动旧 API。
 
 ## 候选锁定

@@ -1,6 +1,7 @@
 """Only MCP, identity and database configuration. No legacy env loading."""
 from dataclasses import dataclass, field
 import os
+from pathlib import Path
 from urllib.parse import urlsplit
 from .errors import require
 
@@ -51,6 +52,8 @@ class Settings:
         require(self.mode=='test' or self.audience==self.resource_url,
                 'INVALID_CONFIGURATION','Production audience must identify this canonical MCP resource.')
         require(type(self.recording_enabled) is bool, 'INVALID_CONFIGURATION', 'Recording mode must be boolean.')
+        require(self.mode=='test' or bool(self.purge_ledger_dir) and Path(self.purge_ledger_dir).is_absolute(),
+                'INVALID_CONFIGURATION','Production requires an explicit persistent erasure ledger directory.')
 
     @classmethod
     def from_env(cls):

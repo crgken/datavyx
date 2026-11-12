@@ -39,5 +39,10 @@ class TokenTests(unittest.TestCase):
         with self.assertRaises(KnowledgeError):self.auth.authenticate('Bearer '+token[:-10]+'AAAAAAAAAA')
         with self.assertRaises(KnowledgeError):self.auth.authenticate('Basic '+token)
 
+    def test_new_scopes_are_explicit_and_unknown_scopes_never_become_permissions(self):
+        from mcp_backend.permissions import PERMISSIONS
+        identity=self.auth.authenticate('Bearer '+self.token(scope=' '.join('knowledge:'+p for p in PERMISSIONS)+' knowledge:execute'))
+        self.assertEqual(identity.permissions,PERMISSIONS);self.assertNotIn('execute',identity.permissions)
+
 
 if __name__=='__main__':unittest.main()

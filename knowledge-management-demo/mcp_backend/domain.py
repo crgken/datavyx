@@ -82,7 +82,9 @@ def fact_value(fact):
 def value_key(fact):
     value=fact_value(fact)
     if value.get('type')=='number':
-        try:value={**value,'value':format(Decimal(str(value['value'])).normalize(),'f')}
+        try:
+            number=Decimal(str(value['value']))
+            value={**value,'value':'0' if number.is_zero() else format(number.normalize(),'f')}
         except Exception:return digest(value)
     return digest(value)
 

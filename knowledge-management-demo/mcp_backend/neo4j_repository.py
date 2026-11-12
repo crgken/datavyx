@@ -58,6 +58,7 @@ class Repository:
         revoked=tx.run('MATCH (r:KDMobileRevokedToken {id:$id}) WHERE r.expires>$now RETURN r.id AS id',
                        id=scope.token_hash,now=time.time()).single()
         require(not revoked,'UNAUTHENTICATED','Authentication has been revoked.',401)
+        return frozenset(roles[row['role']] & scope.permissions)
 
     @staticmethod
     def revision(tx,dataset,write=False):

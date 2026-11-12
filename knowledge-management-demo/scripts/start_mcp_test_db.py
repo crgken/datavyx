@@ -11,7 +11,7 @@ assert 'NEO4J_AUTH=none' in info['Config']['Env']
 subprocess.run(['docker','start',name],check=True,stdout=subprocess.DEVNULL)
 for attempt in range(40):
     try:
-        result=subprocess.run(['docker','exec',name,'cypher-shell','RETURN 1'],capture_output=True,timeout=8)
+        result=subprocess.run(['docker','exec',name,'timeout','7','cypher-shell','RETURN 1'],capture_output=True,timeout=9)
         if result.returncode==0:
             print('READY isolated Neo4j 17694',flush=True)
             break

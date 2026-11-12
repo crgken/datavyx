@@ -34,6 +34,9 @@ class Ingestion:
                 require(previous['fingerprint'] == fingerprint, 'IDEMPOTENCY_CONFLICT',
                         'This request ID was already used for a different body.', 409)
                 return {**json.loads(previous['receipt']), 'idempotent': True}
+            require(self.repo.settings.mode == 'test' or self.repo.settings.recording_enabled
+                    or scope.actor in self.repo.settings.recording_actors,
+                    'MAINTENANCE', 'New recording is temporarily disabled. Queries and receipts remain available.', 503)
             objects, existing = self.repo.snapshot(tx, scope)
             now = time.time()
             metadata = {'dataset': scope.dataset, 'created_at': now, 'recorded_at': now,

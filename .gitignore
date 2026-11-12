@@ -6,6 +6,15 @@
 !/deploy/atlasai-apply-release.sh
 !/deploy/README.md
 !/deploy/openai-model.env.example
+!/deploy/mcp/
+/deploy/mcp/*
+!/deploy/mcp/*.py
+!/deploy/mcp/*.sh
+!/deploy/mcp/*.service
+!/deploy/mcp/*.conf
+!/deploy/mcp/*.html
+!/deploy/mcp/*.env.example
+!/deploy/mcp/README.md
 !/knowledge-management-demo/
 !/knowledge-web-pwa/
 !/AGENTS.md

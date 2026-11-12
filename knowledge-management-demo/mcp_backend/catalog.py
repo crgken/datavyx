@@ -63,6 +63,8 @@ class Catalog:
                         'actor_id': scope.actor, 'identity_normalization': 'NFC-strip-casefold-v1',
                         'name_is_unique': False, 'new_vocabulary': 'allowed_with_source',
                         'numeric_scale': 6, 'max_number_absolute': '1000000000',
+                        'recording_available': self.repo.settings.mode == 'test' or self.repo.settings.recording_enabled
+                                               or scope.actor in self.repo.settings.recording_actors,
                         'unit_rule': 'explicit_source_quote', 'scope': 'authorized_workspace',
                         'supported_operations': ['record', 'query']}}
         return self.repo.scoped(scope, read)

@@ -1,0 +1,58 @@
+# MCP 候选与正式发布操作边界
+
+这是新的 MCP 专用发布入口。旧 deploy-lightsail.ps1 / atlasai-apply-release.sh 继续保留历史用途，本次不调用；不构建 Flutter，不重新处理网页资产，不安装旧 requirements 或启动旧 API。
+
+## 候选锁定
+
+完成规定测试 → 提交 → 推送 codex/mcp-neo4j → 核对本地 HEAD 与 origin 分支 → 创建一次候选包：
+
+```powershell
+python deploy/mcp/release_artifact.py build --root . --remote-ref origin/codex/mcp-neo4j --output knowledge-management-demo/.mcp-artifacts/release-COMMIT.tar
+```
+
+输出 commit、整个包 SHA-256 和文件数。包内 MCP-MANIFEST.json 逐项固定路径、大小和 SHA-256。只收录 MCP 后端/测试/脚本/独立锁与本目录；不收录旧 demo、Flutter、数据库、真实配置或密钥。工作区必须干净且已经推送，不得从未提交内容打包。
+
+上传同一个包至 /home/ubuntu/atlasai-deploy/mcp/。服务器先用可信校验器 verify；解包拒绝路径穿越、链接、重复文件、额外文件、成员篡改、错误 commit、非空目标。完整包 hash 必须来自本地记录，不能仅相信包里自行声明的 hash。
+
+## 隔离安装和认证
+
+1. 先从已有一致性备份恢复到单独 Neo4j 测试容器，仅绑定 127.0.0.1:17694。不复制运行中的卷，不停生产 17693/17695。记录备份时点/版本及差异，时效不足明确报告。
+2. 新 Auth0 API Identifier 为 https://kb.datavyx.com/mcp-candidate，RS256，scope 为 knowledge:read / knowledge:record。独立 ChatGPT OAuth 客户端采用授权码 + S256 PKCE；回调从 ChatGPT 管理页面精确复制。Client ID 可作为公开配置，client secret 仅存身份提供方和 ChatGPT 受保护配置，不放服务端包。
+3. 服务器 /etc/atlasai/mcp-candidate.env 使用例子，root:root/0600，MCP_MODE=test、数据库 17694、服务 8098、resource/audience 相同，公开客户端 allowlist 明确。run_env.py 不执行 shell、不继承模型变量、不打印配置内容；拒绝候选误指生产。
+4. 执行 `sudo bash install-candidate.sh ARCHIVE SHA256 COMMIT`，仅创建不可变 candidate 目录和独立 venv，显式迁移测试库，安装候选 systemd 服务并检查新 ready。不会安装网关、停旧服务或执行生产迁移；失败只恢复旧候选指针。
+5. nginx-candidate.conf 只增加候选及其发现文档两个 location，在现有 HTTPS server 内审阅加入、nginx -t 后 reload。保留旧网页/API；匿名知识调用必须 401，元数据可公开。
+6. 本机健康/401 不代替真实 Auth0/ChatGPT。真实客户端需完成上下文、候选、直接保存、查询、来源及同键回执恢复，并单独记录。
+
+再次安装相同 commit 会先检查已装清单，复用相同源码和已完成的依赖环境；失败的依赖下载可用同一包继续。发现源码漂移直接拒绝。restore-candidate.sh 仅切回已经验证的旧候选并复核健康，不改生产或数据库。依赖、运行代码或必要模板改变才生成新的 Git 候选。
+
+## 历史兼容与恢复
+
+在已加载显式 MCP 配置的隔离副本内：
+
+```bash
+python -m scripts.mcp_legacy_compatibility --dataset EXACT_DATASET
+python -m scripts.mcp_legacy_compatibility --dataset EXACT_DATASET --apply --expected-fingerprint AUDIT_HASH
+```
+
+audit 仅输出计数、状态、兼容阻塞和指纹，无原文、token 或用户名称。apply 在数据锁中核对最新指纹，仅补齐可确定的 number_scaled；不改变 ID、事实内容、原文、成员、旧归档/撤回/提案状态。数值不一致、缺来源、孤立关联、未分类旧待确认记录必须先调查，不能自动激活或重抽消息。
+
+逻辑副本 export_snapshot 要求调用方先冻结**副本**写入；restore_test_snapshot 只能写本机 17694 的空目标数据集，拒绝覆盖和跨空间 ID。它用于隔离演练，不替代正式库的离线卷备份。正式恢复必须使用已有经演练的备份方式。
+
+## 正式发布（尚未授权执行）
+
+U15/U16 全部通过后，先提交具体发布报告。用户正式发布后再合并/推送 main 并核对候选运行清单一致；不用旧发布脚本。需要执行的固定顺序：
+
+1. 核验 main、包 hash、配置、备份和实测恢复记录；先保护旧入口在途请求，建立旧写入屏障并停相关 worker。
+2. 按已核验方式作最终一致性备份；仅备份方法需要时才在明确窗口短暂停库。保留旧代码、配置、网关和 volume，不删容器或数据。
+3. 把已经演练的候选准备为 /opt/atlasai-mcp/current，使用 atlasai-mcp.service（8099）、独立 /etc/atlasai/mcp.env，resource/audience 为正式 /mcp。首次默认 MCP_RECORDING_ENABLED=0，MCP_RECORDING_ACTORS 只允许限定验证账号。
+4. 对正式规范库运行已演练的显式 schema/兼容迁移；验证来源/ID/状态/统计差异后，限制开放完成最小闭环。
+5. 使用 nginx-production.conf 的切换逻辑**替换重叠旧 location**，不能直接叠加。停止旧自然语言/语音/修改/确认 API 及 Graphiti worker；逐项验证旧接口不可用。静态迁移页通过网关提供，不构建前端。既有 Flutter service worker 缓存需要独立核对，后端 410 始终阻止旧写入。
+6. 检查通过后才开启 MCP_RECORDING_ENABLED=1，重启 MCP 服务，复核真实客户端及日志。测试/候选数据库不作为正式业务库。
+
+开放新写入前失败：保持屏障，按备份恢复旧代码/配置/必要数据，网关与旧服务恢复属于明确回滚，不是新 MCP 的模型降级。开放新写入后失败：先保护新记录和回执，优先前向修复/兼容代码回退；禁止用旧卷覆盖新记录。旧语义卷永久清理另行授权。
+
+以上生产步骤需在 U15 的实际服务/备份盘点基础上形成精确发布清单；本目录模板不会自动授权生产切换。
+
+`switch-production.sh` 为 U17 授权后的分阶段操作入口，必须显式给出相同 commit 的授权标记和已存在的最终备份目录。prepare 要求旧请求已排空、旧 API 停止、正式新增关闭；activate 只安装人工审阅并校验 hash 的完整 nginx 文件；open 在开启新增前落地不可回滚标记；rollback 只允许在该标记不存在时恢复旧路由/API，且不会还原数据库。该脚本从不操作 Docker 容器/卷或删除数据。
+
+本次服务器实际盘点只有旧 atlasai-knowledge-api.service 和 atlasai-knowledge-db.service；旧 Graphiti 在 API 进程内运行，停 API 会停止这一运行入口。DB 服务继续保留，不能把它当 worker 停掉。U18 还须复核是否出现新的独立 worker/手动进程，不能凭旧盘点跳过检查。

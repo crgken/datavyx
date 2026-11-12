@@ -1,0 +1,24 @@
+[Unit]
+Description=AtlasAI isolated MCP candidate
+After=network-online.target docker.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/atlasai-mcp/candidate/knowledge-management-demo
+EnvironmentFile=/etc/atlasai/mcp-candidate.env
+ExecStart=/opt/atlasai-mcp/candidate/knowledge-management-demo/.venv-mcp/bin/python -m mcp_backend
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGTERM
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

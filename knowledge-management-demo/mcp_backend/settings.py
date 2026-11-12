@@ -21,6 +21,8 @@ class Settings:
     mode: str = 'production'
     max_records: int = 10000
     organization: str = ''
+    recording_enabled: bool = False
+    recording_actors: tuple[str, ...] = ()
 
     def __post_init__(self):
         uri = urlsplit(self.uri)
@@ -47,10 +49,13 @@ class Settings:
                 'INVALID_CONFIGURATION','Audience, client allowlist and a cursor signing secret are required.')
         require(self.mode=='test' or self.audience==self.resource_url,
                 'INVALID_CONFIGURATION','Production audience must identify this canonical MCP resource.')
+        require(type(self.recording_enabled) is bool, 'INVALID_CONFIGURATION', 'Recording mode must be boolean.')
 
     @classmethod
     def from_env(cls):
         try:
+            recording = os.getenv('MCP_RECORDING_ENABLED','0')
+            require(recording in {'0','1'}, 'INVALID_CONFIGURATION', 'MCP_RECORDING_ENABLED must be 0 or 1.')
             return cls(uri=os.environ['MCP_NEO4J_URI'],database=os.getenv('MCP_NEO4J_DATABASE','neo4j'),
                 user=os.getenv('MCP_NEO4J_USER','neo4j'),password=os.environ['MCP_NEO4J_PASSWORD'],
                 issuer=os.environ['MCP_AUTH_ISSUER'],audience=os.environ['MCP_AUTH_AUDIENCE'],
@@ -58,7 +63,8 @@ class Settings:
                 resource_url=os.environ['MCP_RESOURCE_URL'],cursor_secret=os.environ['MCP_CURSOR_SECRET'],
                 host=os.getenv('MCP_HOST','127.0.0.1'),port=int(os.getenv('MCP_PORT','8098')),
                 mode=os.getenv('MCP_MODE','production'),max_records=int(os.getenv('MCP_MAX_RECORDS','10000')),
-                organization=os.getenv('MCP_AUTH_ORGANIZATION',''))
+                organization=os.getenv('MCP_AUTH_ORGANIZATION',''), recording_enabled=recording=='1',
+                recording_actors=tuple(s.strip() for s in os.getenv('MCP_RECORDING_ACTORS','').split(',') if s.strip()))
         except (KeyError, ValueError):
             from .errors import KnowledgeError
             raise KnowledgeError('INVALID_CONFIGURATION','Required MCP configuration is missing or invalid.') from None

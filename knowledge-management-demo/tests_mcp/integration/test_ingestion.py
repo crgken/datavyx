@@ -143,5 +143,20 @@ class IngestionTests(unittest.TestCase):
         with self.assertRaises(KnowledgeError): self.save(sample())
         self.assertEqual(self.nodes(), 0)
 
+    def test_production_maintenance_allows_receipts_but_no_new_records(self):
+        restricted = replace(self.repo.settings, mode='production', password='unused-test-only',
+                             resource_url='https://mcp.example/mcp')
+        with patch.object(self.repo, 'settings', restricted):
+            with self.assertRaises(KnowledgeError) as blocked: self.save(sample())
+            self.assertEqual(blocked.exception.code, 'MAINTENANCE'); self.assertEqual(self.nodes(), 0)
+        with patch.object(self.repo, 'settings', replace(restricted, recording_actors=(self.scope.actor,))):
+            first = self.save(sample())
+        with patch.object(self.repo, 'settings', restricted):
+            replay = self.save(sample()); self.assertTrue(replay['idempotent'])
+            recovered = self.service.get_receipt(self.scope, ReceiptInput(request_id='test-request-001'))
+            self.assertEqual(recovered['receipt']['receipt_id'], first['receipt_id'])
+            with self.assertRaises(KnowledgeError): self.save(self.reference(first))
+        self.assertEqual(self.nodes(), 4)
+
 
 if __name__ == '__main__': unittest.main()

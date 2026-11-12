@@ -7,6 +7,7 @@
 !/deploy/prepare-mcp-release.py
 !/deploy/backup-mcp-release.py
 !/deploy/migrate-mcp-release.py
+!/deploy/verify-mcp-release.py
 !/deploy/README.md
 !/deploy/openai-model.env.example
 !/deploy/mcp/
@@ -43,6 +44,7 @@
 !/docs/50-运行记录/MCP改造开发进度-2026-11-12.md
 !/docs/50-运行记录/MCP修改删除开发进度-2026-11-12.md
 !/docs/50-运行记录/MCP修改删除候选发布报告-2026-11-12.md
+!/docs/50-运行记录/MCP正式发布报告-2026-11-12.md
 !/docs/60-子系统与工具说明/
 /docs/60-子系统与工具说明/*
 !/docs/60-子系统与工具说明/Datavyx线上功能与业务流程说明-2026-11-11.md

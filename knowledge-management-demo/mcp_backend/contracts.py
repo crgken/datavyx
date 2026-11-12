@@ -232,6 +232,7 @@ class TargetSelection(StrictModel):
 
 class ReceiptInput(Versioned):
     request_id: RequestId
+    include_history: bool = False
 
 
 class RecordReceipt(StrictModel):
@@ -318,6 +319,7 @@ class OperationReceipt(StrictModel):
     objects_changed: int = Field(ge=0)
     facts_changed: int = Field(ge=0)
     sources_changed: int = Field(ge=0)
+    sources_recorded: int = Field(default=0,ge=0)
     relations_hidden: int = Field(ge=0)
     recoverable: bool
     selection_complete: Literal[True] = True

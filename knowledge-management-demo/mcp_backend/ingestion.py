@@ -18,11 +18,13 @@ class Ingestion:
 
     def get_receipt(self, scope, data):
         def read(tx, revision):
+            if data.include_history:self.repo.authorize(tx,scope,'history')
             row = tx.run('MATCH (r:KDMCPRequest {dataset:$d,id:$id}) RETURN r.receipt AS receipt',
                          d=scope.dataset, id=request_key(scope, data.request_id)).single()
             receipt=json.loads(row['receipt']) if row else None
             if receipt and receipt.get('schema_version','1.0')=='1.0':
                 receipt['current_state']=self._receipt_state(tx,scope,receipt)
+                if not data.include_history:receipt=self._safe_receipt(receipt)
             return {'found': bool(row), 'receipt': receipt}
         return self.repo.scoped(scope, read)
 
@@ -38,7 +40,7 @@ class Ingestion:
                 require(previous['fingerprint'] == fingerprint, 'IDEMPOTENCY_CONFLICT',
                         'This request ID was already used for a different body.', 409)
                 receipt=json.loads(previous['receipt'])
-                return {**receipt, 'idempotent': True,'current_state':self._receipt_state(tx,scope,receipt)}
+                return self._safe_receipt({**receipt, 'idempotent': True,'current_state':self._receipt_state(tx,scope,receipt)})
             require(self.repo.settings.mode == 'test' or self.repo.settings.recording_enabled
                     or scope.actor in self.repo.settings.recording_actors,
                     'MAINTENANCE', 'New recording is temporarily disabled. Queries and receipts remain available.', 503)
@@ -137,7 +139,18 @@ class Ingestion:
         return self.repo.scoped(scope, save, 'record')
 
     @staticmethod
+    def _safe_receipt(receipt):
+        # Caller-chosen ref keys can themselves contain obsolete/deleted names.
+        if receipt.get('current_state','current')!='current':
+            return {**receipt,'entity_ids':{},'source_ids':{}}
+        return receipt
+
+    @staticmethod
     def _receipt_state(tx,scope,receipt):
+        sources=list(receipt.get('source_ids',{}).values())
+        alive=tx.run('MATCH (s:KDSource {dataset:$d}) WHERE s.id IN $ids AND s.deleted_by IS NULL '
+                     'RETURN count(s) AS n',d=scope.dataset,ids=sources).single()['n']
+        if alive!=len(set(sources)):return 'deleted'
         ids=list(receipt.get('entity_ids',{}).values())
         rows=[dict(r['o']) for r in tx.run('MATCH (o:KDObject {dataset:$d}) WHERE o.id IN $ids RETURN properties(o) AS o',d=scope.dataset,ids=ids)]
         if len(rows)!=len(set(ids)) or any(o.get('deleted_by') for o in rows):return 'deleted'

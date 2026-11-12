@@ -42,7 +42,8 @@ class Mutations:
                 'status':'applied' if changed else 'noop','revision_before':revision,'revision':after,
                 'matched_count':ctx['matched'],'applied_count':ctx['applied'],
                 'objects_changed':len(ctx['changed']['entity']),'facts_changed':len(ctx['changed']['fact']),
-                'sources_changed':len(ctx['changed']['source'])+int(ctx['sources_created'])*len(data.sources),
+                'sources_changed':len(ctx['changed']['source']),
+                'sources_recorded':int(ctx['sources_created'])*len(data.sources),
                 'relations_hidden':ctx['relations_hidden'],'recoverable':operation=='delete',
                 'selection_complete':True,'idempotent':False}
             tx.run('CREATE (r:KDMCPRequest) SET r=$r',r={'id':rid,'dataset':scope.dataset,
@@ -183,3 +184,68 @@ class Mutations:
                 [obj['id']]+[f.get('object_id') for f in selected if f.get('object_id')]
                 +[f['object_id'] for f,_ in replacements if f['object_id']])
             require(len(ctx['facts'])<=self.repo.settings.max_records,'LIMIT_EXCEEDED','Fact history exceeds the resource limit.',413)
+
+    def _selection(self,tx,ctx):
+        data=ctx['data'];scope=ctx['scope']
+        require(data.expected_revision==ctx['revision'],'STALE_SELECTION','The workspace changed after target selection.',409)
+        targets,signature,_=select_targets(self.repo,tx,scope,data.selection)
+        require(len(targets)==data.expected_count and signature==data.selection_digest,'INCOMPLETE_SCOPE',
+                'The complete target range or count differs from the supplied selection.',409)
+        if len(targets)>1 or data.selection.resource=='workspace':self.repo.authorize(tx,scope,'bulk')
+        ctx['matched']=len(targets)
+        return targets
+
+    def _source_dependencies(self,tx,ctx,source_ids,entity_ids,fact_ids):
+        scope=ctx['scope']
+        for sid in source_ids:
+            for row in tx.run('MATCH (:KDSource {dataset:$d,id:$id})-[:KD_SUPPORTS]->(n) '
+                'RETURN labels(n) AS labels,properties(n) AS n',d=scope.dataset,id=sid):
+                node=row['n'];labels=row['labels']
+                if 'KDObject' in labels:
+                    if node['id'] in entity_ids or not present(node):continue
+                elif 'KDFact' in labels:
+                    if (node['id'] in fact_ids or node.get('subject_id') in entity_ids or node.get('object_id') in entity_ids
+                        or not current_fact(node,ctx['objects'])):continue
+                else:continue
+                remaining=tx.run('MATCH (s:KDSource {dataset:$d})-[:KD_SUPPORTS]->(n {dataset:$d,id:$id}) '
+                    'WHERE NOT s.id IN $removed AND coalesce(s.valid,true) AND s.deleted_by IS NULL '
+                    'RETURN count(DISTINCT s) AS n',d=scope.dataset,id=node['id'],removed=sorted(source_ids)).single()['n']
+                require(remaining>0,'SOURCE_DEPENDENCY','A selected source is the last evidence for a record outside the target range.',409)
+
+    def delete_information(self,scope,data):
+        return self._execute(scope,data,'delete',self._delete)
+
+    def _delete(self,tx,ctx):
+        require(ctx['data'].selection.state=='present','INVALID_ARGUMENT','Ordinary deletion selects present resources.')
+        targets=self._selection(tx,ctx);scope=ctx['scope']
+        entities={t['id'] for t in targets if t['resource']=='entity'}
+        facts={t['id'] for t in targets if t['resource']=='fact'}
+        sources={t['id'] for t in targets if t['resource']=='source'}
+        self._source_dependencies(tx,ctx,sources,entities,facts)
+        affected=[f for f in ctx['facts'].values() if current_fact(f,ctx['objects']) and
+            (f['id'] in facts or f['subject_id'] in entities or f.get('object_id') in entities)]
+        ctx['relations_hidden']=sum(bool(f.get('object_id')) for f in affected)
+        ctx['changed']['fact'].update(f['id'] for f in affected)
+        changed_ids=entities|{f['id'] for f in affected}
+        for r in tx.run('MATCH (s:KDSource {dataset:$d})-[:KD_SUPPORTS]->(n) WHERE n.id IN $ids '
+                        'RETURN DISTINCT s.id AS id',d=scope.dataset,ids=sorted(changed_ids)):
+            ctx['changed']['source'].add(r['id'])
+        self._touch(tx,ctx,[oid for f in affected for oid in (f.get('subject_id'),f.get('object_id'))])
+        for target in targets:
+            resource=target['resource'];label=LABELS[resource];tid=target['id']
+            row=tx.run(f'MATCH (n:{label} {{dataset:$d,id:$id}}) RETURN properties(n) AS n',d=scope.dataset,id=tid).single()
+            require(row,'INVALID_REFERENCE','A target disappeared.',409)
+            before=dict(row['n'])
+            if resource=='entity':before['version']=ctx['versions'][tid]
+            after={**before,'deleted_by':ctx['rid'],'deleted_at':ctx['now']}
+            if resource=='entity':
+                self._touch(tx,ctx,[tid]);after['version']=ctx['objects'][tid]['version']
+            else:after['version']=before.get('version',1)+1
+            tx.run(f'MATCH (n:{label} {{dataset:$d,id:$id}}) SET n.deleted_by=$op,n.deleted_at=$at,n.version=$version',
+                   d=scope.dataset,id=tid,op=ctx['rid'],at=ctx['now'],version=after['version']).consume()
+            ctx['changed'][resource].add(tid);ctx['applied']+=1
+            related=([before.get('subject_id'),before.get('object_id')] if resource=='fact' else [])
+            related=[i for i in related if i]
+            self._journal(tx,ctx,resource,tid,before,after,related)
+            if resource=='entity':ctx['objects'][tid].update(after)
+            if resource=='fact':ctx['facts'][tid].update(after)

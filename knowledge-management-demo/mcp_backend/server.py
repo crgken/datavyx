@@ -35,6 +35,8 @@ page when has_more is true. A page or local graph is not the whole workspace. Us
 Reuse existing exact types/predicates, directions and cardinalities. Similar names do not prove identical entities.
 Reference only IDs actually returned by this workspace; a create with an existing explicit identity is rejected.
 Pass only actually received source text and verbatim quotes; never claim complete chat history was supplied.
+For currencies use ISO codes with literal unit_quotes (e.g. 人民币 supports CNY); do not infer currency from 元/$/¥.
+Include both the amount statement and any shared currency declaration in each affected fact.quotes.
 When reliable structuring is impossible, source_only saves text without invented objects/facts.
 record_information directly commits an append-only record; there is no approval or confirmation tool.
 Use a stable request_id, get_receipt after an uncertain result, and retry with that same ID and body if absent.

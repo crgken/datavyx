@@ -6,6 +6,7 @@ import json
 import unicodedata
 from .contracts import EntityCreate, NumberValue
 from .errors import require
+from .unit_labels import unit_label_matches
 
 
 def encoded(value):
@@ -50,12 +51,12 @@ def validate_record(data):
             quotes(fact.value.unit_quotes)
             if fact.value.unit:
                 require(bool(fact.value.unit_quotes),'INVALID_ARGUMENT','A numeric unit requires source evidence.')
-                # Unit names are open vocabulary; no currency is inferred from
-                # geography. Exact canonical labels must be present in evidence.
-                require(any(key(fact.value.unit) == key(q.quote) for q in fact.value.unit_quotes),
-                        'INVALID_ARGUMENT','The explicit unit label must appear in its quoted evidence.')
+                require(any(unit_label_matches(q.quote, fact.value.unit) for q in fact.value.unit_quotes),
+                        'INVALID_ARGUMENT','Quote a literal unit label or an unambiguous CLDR currency name matching the ISO code. '
+                        'Do not infer a currency from a bare symbol or language.')
                 require(all(any(q.source_ref==s.source_ref and q.quote in s.quote for s in fact.quotes)
-                            for q in fact.value.unit_quotes),'INVALID_ARGUMENT','Unit evidence must support this fact.')
+                            for q in fact.value.unit_quotes),'INVALID_ARGUMENT',
+                        'Include the unit evidence in this fact\'s quotes, including any shared denomination statement.')
 
 
 def literal_fields(value):

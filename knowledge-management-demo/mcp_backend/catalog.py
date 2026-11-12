@@ -66,6 +66,6 @@ class Catalog:
                         'numeric_scale': 6, 'max_number_absolute': '1000000000',
                         'recording_available': 'record' in permissions and (self.repo.settings.mode == 'test'
                             or self.repo.settings.recording_enabled or scope.actor in self.repo.settings.recording_actors),
-                        'unit_rule': 'explicit_source_quote', 'scope': 'authorized_workspace',
+                        'unit_rule': 'explicit_source_quote_cldr_currency_v1', 'scope': 'authorized_workspace',
                         'supported_operations': ['record', 'query']}}
         return self.repo.scoped(scope, read)

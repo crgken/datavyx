@@ -2,6 +2,7 @@ import unittest
 from mcp_backend.contracts import RecordInput,NumberValue
 from mcp_backend.domain import digest,identity_key,validate_record,number_fields,eligibility
 from mcp_backend.errors import KnowledgeError
+from mcp_backend.unit_labels import unit_label_matches
 from test_contracts import record
 
 
@@ -40,6 +41,23 @@ class DomainTests(unittest.TestCase):
         self.assertEqual(eligibility(objects,facts),eligibility(objects,facts[::-1]))
         self.assertTrue(all('conflict' in r for r in eligibility(objects,facts).values()))
         self.assertEqual(len(objects),1)
+
+    def test_currency_names_require_unique_full_labels(self):
+        for literal, unit in [('人民币','CNY'),('人民幣','CNY'),('US dollars','USD'),('日元','JPY'),('kg','kg')]:
+            with self.subTest(literal=literal):self.assertTrue(unit_label_matches(literal,unit))
+        for literal, unit in [('元','CNY'),('$','USD'),('¥','CNY'),('USDC','USD'),('人民币','JPY'),('币种为人民币','CNY')]:
+            with self.subTest(literal=literal):self.assertFalse(unit_label_matches(literal,unit))
+
+    def test_shared_currency_statement_must_be_quoted_for_this_fact(self):
+        d=record();d['sources'][0]['text']='币种为人民币。Alpha 支出100元。'
+        d['facts'][0]['value']={'type':'number','decimal':'100','unit':'CNY',
+            'unit_quotes':[{'source_ref':'s1','quote':'人民币'}]}
+        d['facts'][0]['quotes']=[{'source_ref':'s1','quote':'Alpha 支出100元。'}]
+        with self.assertRaises(KnowledgeError):validate_record(RecordInput.model_validate(d))
+        d['facts'][0]['quotes'].append({'source_ref':'s1','quote':'币种为人民币。'})
+        validate_record(RecordInput.model_validate(d))
+        d['facts'][0]['value']['unit_quotes'][0]['quote']='Chinese Yuan'
+        with self.assertRaises(KnowledgeError):validate_record(RecordInput.model_validate(d))
 
     def test_estimated_and_multivalue_are_not_mixed(self):
         objects={'o':{'id':'o'}}

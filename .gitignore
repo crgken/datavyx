@@ -8,6 +8,29 @@
 !/deploy/openai-model.env.example
 !/knowledge-management-demo/
 !/knowledge-web-pwa/
+!/AGENTS.md
+
+# MCP implementation rules and selected design/progress documents only.
+!/docs/
+/docs/*
+!/docs/10-当前基线/
+/docs/10-当前基线/*
+!/docs/10-当前基线/项目当前基线-2026-11-11.md
+!/docs/30-决策记录/
+/docs/30-决策记录/*
+!/docs/30-决策记录/知识管理MCP采用Agent结构化输入与Neo4j直连-2026-11-11.md
+!/docs/40-实施计划/
+/docs/40-实施计划/*
+!/docs/40-实施计划/AtlasAI知识管理MCP规划-2026-11-11.md
+!/docs/40-实施计划/AtlasAI知识管理MCP完整改造方案-2026-11-11.md
+!/docs/40-实施计划/AtlasAI知识管理MCP开发到上线流程-2026-11-12.md
+!/docs/40-实施计划/AtlasAI知识管理MCP单元化开发计划-2026-11-12.md
+!/docs/50-运行记录/
+/docs/50-运行记录/*
+!/docs/50-运行记录/MCP改造开发进度-2026-11-12.md
+!/docs/60-子系统与工具说明/
+/docs/60-子系统与工具说明/*
+!/docs/60-子系统与工具说明/Datavyx线上功能与业务流程说明-2026-11-11.md
 
 # Live verification reports may contain data copied from the running demo.
 /knowledge-management-demo/docs/
@@ -30,6 +53,8 @@ reference_project/frontend/.vite
 atlasai-core/app/demo.db
 **/__pycache__/
 **/*.pyc
+**/.venv-mcp/
+**/.mcp-artifacts/
 outputs/client-acquisition/collector/
 outputs/client-acquisition/company-lookups/
 atlasai-core/eval/results_*.json

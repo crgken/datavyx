@@ -324,6 +324,7 @@ class OperationReceipt(StrictModel):
     recoverable: bool
     selection_complete: Literal[True] = True
     idempotent: bool = False
+    current_state: Literal['current','changed','restored'] = 'current'
 
 
 class PurgedReceipt(StrictModel):

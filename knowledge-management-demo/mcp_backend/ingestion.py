@@ -6,6 +6,7 @@ from .contracts import EntityCreate
 from .domain import (available, certainty, digest, eligibility, encoded, fact_value,
                      identity_key, literal_fields, validate_record, value_key)
 from .errors import require
+from .lifecycle import operation_state
 
 
 def request_key(scope, request_id):
@@ -19,12 +20,14 @@ class Ingestion:
     def get_receipt(self, scope, data):
         def read(tx, revision):
             if data.include_history:self.repo.authorize(tx,scope,'history')
-            row = tx.run('MATCH (r:KDMCPRequest {dataset:$d,id:$id}) RETURN r.receipt AS receipt',
+            row = tx.run('MATCH (r:KDMCPRequest {dataset:$d,id:$id}) RETURN r.receipt AS receipt,properties(r) AS request',
                          d=scope.dataset, id=request_key(scope, data.request_id)).single()
             receipt=json.loads(row['receipt']) if row else None
             if receipt and receipt.get('schema_version','1.0')=='1.0':
                 receipt['current_state']=self._receipt_state(tx,scope,receipt)
                 if not data.include_history:receipt=self._safe_receipt(receipt)
+            elif receipt and receipt.get('status')!='purged':
+                receipt['current_state']=operation_state(tx,scope.dataset,row['request'])
             return {'found': bool(row), 'receipt': receipt}
         return self.repo.scoped(scope, read)
 

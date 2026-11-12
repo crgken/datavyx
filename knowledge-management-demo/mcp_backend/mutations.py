@@ -8,7 +8,8 @@ from .domain import (digest,encoded,identity_key,literal_fields,validate_record,
                      value_key,certainty,available)
 from .errors import require
 from .ingestion import Ingestion,request_key
-from .lifecycle import present,current_fact
+from .lifecycle import present,current_fact,operation_state
+from .paging import Pager
 from .selection import LABELS,select_targets
 
 
@@ -25,7 +26,8 @@ class Mutations:
                 old=previous['r']
                 require(not old.get('purged'),'PREVIOUSLY_PURGED','This request was purged and cannot be replayed.',409)
                 require(old.get('fingerprint')==fingerprint,'IDEMPOTENCY_CONFLICT','This request ID belongs to another body or operation.',409)
-                return {**json.loads(old['receipt']),'idempotent':True}
+                return {**json.loads(old['receipt']),'idempotent':True,
+                        'current_state':operation_state(tx,scope.dataset,old)}
             require(self.repo.settings.mode=='test' or self.repo.settings.recording_enabled
                     or scope.actor in self.repo.settings.recording_actors,'MAINTENANCE',
                     'New writes are temporarily disabled. Queries and receipts remain available.',503)
@@ -45,11 +47,17 @@ class Mutations:
                 'sources_changed':len(ctx['changed']['source']),
                 'sources_recorded':int(ctx['sources_created'])*len(data.sources),
                 'relations_hidden':ctx['relations_hidden'],'recoverable':operation=='delete',
-                'selection_complete':True,'idempotent':False}
+                'selection_complete':True,'idempotent':False,'current_state':'current'}
+            versions=[]
+            for resource,label in LABELS.items():
+                versions.extend({'label':label,'id':r['id'],'version':r['version']} for r in tx.run(
+                    f'MATCH (n:{label} {{dataset:$d}}) WHERE n.id IN $ids RETURN n.id AS id,coalesce(n.version,1) AS version',
+                    d=scope.dataset,ids=sorted(ctx['changed'][resource])))
             tx.run('CREATE (r:KDMCPRequest) SET r=$r',r={'id':rid,'dataset':scope.dataset,
                 'workspace_id':scope.workspace_id,'actor':scope.actor,'client_id':scope.client_id,
                 'request_id':data.request_id,'fingerprint':fingerprint,'receipt':encoded(receipt),
                 'operation':operation,'created_at':ctx['now'],
+                'resource_versions':encoded(versions),
                 'affected_ids':sorted(set().union(*ctx['changed'].values())),
                 'source_ids':list(ctx['source_ids'].values()) if ctx['sources_created'] else []}).consume()
             if changed:
@@ -249,3 +257,68 @@ class Mutations:
             self._journal(tx,ctx,resource,tid,before,after,related)
             if resource=='entity':ctx['objects'][tid].update(after)
             if resource=='fact':ctx['facts'][tid].update(after)
+
+    def restore_information(self,scope,data):
+        return self._execute(scope,data,'restore',self._restore)
+
+    def _restore(self,tx,ctx):
+        scope=ctx['scope'];data=ctx['data']
+        require(data.expected_revision==ctx['revision'],'STALE_SELECTION','The workspace changed before restoration.',409)
+        row=tx.run('MATCH (r:KDMCPRequest {dataset:$d,id:$id,operation:"delete"}) RETURN properties(r) AS r',
+            d=scope.dataset,id=data.delete_receipt_id).single()
+        require(row and not row['r'].get('purged'),'INVALID_REFERENCE','This deletion is unavailable or permanently purged.',409)
+        changes=[dict(r['e']) for r in tx.run('MATCH (e:KDMCPChange {dataset:$d,operation_id:$op,operation:"delete"}) '
+            'RETURN properties(e) AS e ORDER BY e.resource,e.target_id LIMIT 1001',d=scope.dataset,op=data.delete_receipt_id)]
+        require(len(changes)<=1000,'LIMIT_EXCEEDED','This restoration exceeds the atomic limit.',413)
+        if len(changes)>1:self.repo.authorize(tx,scope,'bulk')
+        ctx['matched']=len(changes);restore=[]
+        for event in changes:
+            resource=event['resource'];label=LABELS[resource]
+            target=tx.run(f'MATCH (n:{label} {{dataset:$d,id:$id}}) RETURN properties(n) AS n',d=scope.dataset,id=event['target_id']).single()
+            require(target,'RESTORE_CONFLICT','A resource was permanently removed after deletion.',409)
+            node=dict(target['n'])
+            require(not node.get('deleted_by') or node['deleted_by']==data.delete_receipt_id,
+                    'RESTORE_CONFLICT','A later deletion owns this resource; it cannot be undone by this request.',409)
+            if node.get('deleted_by')==data.delete_receipt_id:restore.append((event,node))
+        before_current={f['id'] for f in ctx['facts'].values() if current_fact(f,ctx['objects'])}
+        for event,before in restore:
+            resource=event['resource'];label=LABELS[resource];tid=before['id']
+            after={k:v for k,v in before.items() if k not in {'deleted_by','deleted_at'}}
+            if resource=='entity':
+                self._touch(tx,ctx,[tid]);after['version']=ctx['objects'][tid]['version']
+            else:after['version']=before.get('version',1)+1
+            tx.run(f'MATCH (n:{label} {{dataset:$d,id:$id}}) REMOVE n.deleted_by,n.deleted_at SET n.version=$version',
+                d=scope.dataset,id=tid,version=after['version']).consume()
+            ctx['changed'][resource].add(tid);ctx['applied']+=1
+            related=[i for i in (before.get('subject_id'),before.get('object_id')) if i]
+            self._journal(tx,ctx,resource,tid,before,after,related)
+            if resource=='entity':ctx['objects'][tid]=after
+            if resource=='fact':ctx['facts'][tid]=after
+        reactivated=[f for f in ctx['facts'].values() if f['id'] not in before_current and current_fact(f,ctx['objects'])]
+        ctx['changed']['fact'].update(f['id'] for f in reactivated)
+        self._touch(tx,ctx,[oid for f in reactivated for oid in (f.get('subject_id'),f.get('object_id'))])
+        affected=set().union(ctx['changed']['entity'],ctx['changed']['fact'])
+        for r in tx.run('MATCH (s:KDSource {dataset:$d})-[:KD_SUPPORTS]->(n) WHERE n.id IN $ids '
+                        'RETURN DISTINCT s.id AS id',d=scope.dataset,ids=sorted(affected)):
+            if r['id'] not in ctx['source_ids'].values():ctx['changed']['source'].add(r['id'])
+        if restore:
+            tx.run('MATCH (r:KDMCPRequest {dataset:$d,id:$id}) SET r.restored_by=$restored',
+                   d=scope.dataset,id=data.delete_receipt_id,restored=ctx['rid']).consume()
+
+    def get_history(self,scope,data):
+        def read(tx,revision):
+            if data.entity_id:
+                require(tx.run('MATCH (n:KDObject {dataset:$d,id:$id}) RETURN n.id AS id',d=scope.dataset,id=data.entity_id).single(),
+                    'NOT_FOUND','The history target is unavailable.',404)
+            if data.source_id:
+                require(tx.run('MATCH (n:KDSource {dataset:$d,id:$id}) RETURN n.id AS id',d=scope.dataset,id=data.source_id).single(),
+                    'NOT_FOUND','The history target is unavailable.',404)
+            rows=[dict(r['e']) for r in tx.run('MATCH (e:KDMCPChange {dataset:$d}) WHERE '
+                '($entity IS NOT NULL AND ($entity IN e.entity_ids OR (e.resource="entity" AND e.target_id=$entity))) OR '
+                '($source IS NOT NULL AND ($source IN e.source_ids OR (e.resource="source" AND e.target_id=$source))) OR '
+                '($op IS NOT NULL AND e.operation_id=$op) RETURN properties(e) AS e ORDER BY e.recorded_at,e.id LIMIT $n',
+                d=scope.dataset,entity=data.entity_id,source=data.source_id,op=data.operation_id,n=self.repo.settings.max_records+1)]
+            require(len(rows)<=self.repo.settings.max_records,'LIMIT_EXCEEDED','History exceeds the resource limit.',413)
+            public=[{k:v for k,v in row.items() if k not in {'dataset','payload'}}|json.loads(row['payload']) for row in rows]
+            return {**Pager(self.repo.settings.cursor_secret).page(public,scope,revision,data,'history',data.cursor),'schema_version':'2.0'}
+        return self.repo.scoped(scope,read,'history')

@@ -13,6 +13,9 @@ REQUIRED = {'knowledge-management-demo/mcp_backend/server.py',
             'knowledge-management-demo/mcp_backend/contracts.py',
             'knowledge-management-demo/mcp_backend/neo4j_repository.py',
             'knowledge-management-demo/mcp_backend/__main__.py',
+            'knowledge-management-demo/mcp_backend/mutations.py',
+            'knowledge-management-demo/mcp_backend/purge_ledger.py',
+            'knowledge-management-demo/mcp_backend/erasure.py',
             'knowledge-management-demo/requirements-mcp.lock.txt'}
 
 
@@ -48,7 +51,7 @@ def build(root, remote_ref, output):
     names = git(root, 'ls-tree', '-r', '--name-only', commit).decode('utf-8').splitlines()
     files = {name: git(root, 'show', f'{commit}:{name}') for name in sorted(names) if allowed(name)}
     if not REQUIRED <= files.keys(): raise ValueError('The commit is missing required MCP files.')
-    manifest = {'format': 1, 'commit': commit, 'runtime': 'python3.12',
+    manifest = {'format': 1, 'data_contract':2, 'commit': commit, 'runtime': 'python3.12',
         'files': {name: {'sha256': sha(value), 'size': len(value)} for name, value in files.items()}}
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -72,7 +75,7 @@ def verify(archive_path, expected_sha, expected_commit):
             raise ValueError('Duplicate, linked or oversized archive members are forbidden.')
         if 'MCP-MANIFEST.json' not in names: raise ValueError('Manifest missing.')
         manifest = json.load(archive.extractfile('MCP-MANIFEST.json'))
-        if manifest.get('format') != 1 or manifest.get('commit') != expected_commit or manifest.get('runtime') != 'python3.12':
+        if manifest.get('format') != 1 or manifest.get('data_contract') != 2 or manifest.get('commit') != expected_commit or manifest.get('runtime') != 'python3.12':
             raise ValueError('Manifest version or commit mismatch.')
         files = manifest.get('files', {})
         if not REQUIRED <= files.keys() or set(names) != set(files) | {'MCP-MANIFEST.json'}:
@@ -118,6 +121,19 @@ def verify_installed(target, expected_commit, archive_path=None, expected_sha=No
     return {'status': 'installed_verified', 'commit': expected_commit, 'files': len(manifest['files'])}
 
 
+def compare_git(root,ref,archive_path,expected_sha,expected_commit):
+    """Documentation-only commits need no new runtime artifact."""
+    if not ref.startswith('origin/'):raise ValueError('An explicit pushed reference is required.')
+    manifest,_=verify(archive_path,expected_sha,expected_commit)
+    reference=git(root,'rev-parse',ref).decode().strip()
+    for name,entry in manifest['files'].items():
+        content=git(root,'show',f'{reference}:{name}')
+        if sha(content)!=entry['sha256']:raise ValueError('Git runtime differs from the verified candidate.')
+    current={n for n in git(root,'ls-tree','-r','--name-only',reference).decode().splitlines() if allowed(n)}
+    if current!=set(manifest['files']):raise ValueError('Git runtime file set differs from the verified candidate.')
+    return {'status':'runtime_matches_git','candidate_commit':expected_commit,'ref_commit':reference,'files':len(current)}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     subs = parser.add_subparsers(dest='operation', required=True)
@@ -127,10 +143,13 @@ def main():
         if name == 'extract': command.add_argument('--target', required=True)
     installed = subs.add_parser('installed'); installed.add_argument('--target', required=True); installed.add_argument('--commit', required=True)
     installed.add_argument('--archive'); installed.add_argument('--sha256')
+    compare=subs.add_parser('compare');compare.add_argument('--root',default='.');compare.add_argument('--ref',required=True)
+    compare.add_argument('--archive',required=True);compare.add_argument('--sha256',required=True);compare.add_argument('--commit',required=True)
     args = parser.parse_args()
     try:
         if args.operation == 'build': result = build(args.root, args.remote_ref, args.output)
         elif args.operation == 'installed': result = verify_installed(args.target, args.commit, args.archive, args.sha256)
+        elif args.operation == 'compare':result=compare_git(args.root,args.ref,args.archive,args.sha256,args.commit)
         elif args.operation == 'extract': result = extract(args.archive, args.sha256, args.commit, args.target)
         else:
             manifest, _ = verify(args.archive, args.sha256, args.commit)

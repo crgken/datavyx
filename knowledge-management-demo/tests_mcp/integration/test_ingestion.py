@@ -146,7 +146,8 @@ class IngestionTests(unittest.TestCase):
     def test_production_maintenance_allows_receipts_but_no_new_records(self):
         from mcp_backend.purge_ledger import PurgeLedger
         restricted = replace(self.repo.settings, mode='production', password='unused-test-only',
-                             resource_url='https://mcp.example/mcp',purge_ledger_dir=str(PurgeLedger(self.repo.settings).root(self.scope.dataset)))
+                             resource_url='https://mcp.example/mcp',purge_ledger_dir=str(PurgeLedger(self.repo.settings).root(self.scope.dataset)),
+                             purge_ledger_secret=self.repo.settings.cursor_secret)
         with patch.object(self.repo, 'settings', restricted):
             with self.assertRaises(KnowledgeError) as blocked: self.save(sample())
             self.assertEqual(blocked.exception.code, 'MAINTENANCE'); self.assertEqual(self.nodes(), 0)

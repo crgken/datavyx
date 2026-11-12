@@ -44,12 +44,17 @@ class TextValue(StrictModel):
 class NumberValue(StrictModel):
     type: Literal["number"]
     decimal: str = Field(max_length=36, pattern=r"^-?(?:0|[1-9][0-9]*)(?:\.[0-9]{1,6})?$")
-    unit: str = Field(max_length=40, description='Explicit unit; use an ISO currency code for a known currency. No inferred currency or conversion.')
+    unit: str = Field(max_length=40, description='Explicit unit; reuse the observed label for an existing predicate/currency, otherwise prefer an ISO currency code. No inferred currency or conversion.')
     unit_quotes: list[Quote] = Field(default_factory=list, max_length=8,
         description='Quote literal unit tokens only, e.g. 人民币 for CNY. Unique CLDR Chinese/English currency names are supported; bare 元/$/¥ do not establish an ISO currency. Include the shared denomination statement in each affected fact.quotes as well as its transaction quote.')
 
 
-Value = Annotated[TextValue | NumberValue, Field(discriminator="type")]
+class BooleanValue(StrictModel):
+    type: Literal['boolean']
+    boolean: bool
+
+
+Value = Annotated[TextValue | NumberValue | BooleanValue, Field(discriminator="type")]
 
 
 class EntityCreate(StrictModel):

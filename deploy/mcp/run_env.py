@@ -25,7 +25,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--env', required=True); parser.add_argument('--python', required=True)
     parser.add_argument('--backend', required=True)
-    parser.add_argument('--action', choices=['check-config', 'migrate'], required=True)
+    parser.add_argument('--action', choices=['check-config','migrate','rollback-check','erasure-audit','erasure-reconcile','erasure-apply'], required=True)
+    parser.add_argument('--dataset')
+    parser.add_argument('--authorized-commit',default='')
     parser.add_argument('--candidate', action='store_true')
     parser.add_argument('--production-closed', action='store_true')
     args = parser.parse_args()
@@ -47,8 +49,15 @@ def main():
             and values.get('MCP_RECORDING_ENABLED', '0') == '0'):
             raise ValueError('Production preparation requires the canonical resource and closed recording.')
         # No dotenv interpolation, shell, inherited model env or command-string composition.
-        return subprocess.run([args.python, '-m', 'mcp_backend', '--'+args.action],
-            cwd=args.backend, env={'PATH': os.environ.get('PATH', ''), 'PYTHONDONTWRITEBYTECODE': '1', **values}).returncode
+        child_env={'PATH':os.environ.get('PATH',''),'PYTHONDONTWRITEBYTECODE':'1',**values}
+        if args.action.startswith('erasure-'):
+            if not args.dataset:raise ValueError('An exact recovery dataset is required.')
+            command=[args.python,'-m','scripts.mcp_erasure_recovery','--dataset',args.dataset,'--action',args.action.removeprefix('erasure-')]
+            if args.authorized_commit:
+                command+=['--authorized-commit',args.authorized_commit]
+                child_env['ATLASAI_RELEASE_AUTHORIZED_COMMIT']=os.environ.get('ATLASAI_RELEASE_AUTHORIZED_COMMIT','')
+        else:command=[args.python,'-m','mcp_backend','--'+args.action]
+        return subprocess.run(command,cwd=args.backend,env=child_env).returncode
     except (ValueError, OSError):
         print('Protected MCP configuration failed validation; no values were printed.')
         return 2

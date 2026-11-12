@@ -12,6 +12,7 @@ from .lifecycle import present,current_fact,operation_state
 from .paging import Pager
 from .purge_ledger import PurgeLedger
 from .erasure import related_events,read_events,erase_content
+from .unit_labels import unit_label_matches
 from collections import Counter
 import hashlib
 import hmac
@@ -24,7 +25,7 @@ class Mutations:
     def _execute(self,scope,data,operation,apply):
         rid=request_key(scope,data.request_id)
         body=[operation,data.model_dump(exclude={'workspace_id'})]
-        fingerprint=(hmac.new(self.repo.settings.cursor_secret.encode(),encoded(body).encode(),hashlib.sha256).hexdigest()
+        fingerprint=(hmac.new((self.repo.settings.purge_ledger_secret or self.repo.settings.cursor_secret).encode(),encoded(body).encode(),hashlib.sha256).hexdigest()
                      if operation=='purge' else digest(body))
         def run(tx,revision):
             previous=tx.run('MATCH (r:KDMCPRequest {dataset:$d,id:$id}) RETURN properties(r) AS r',
@@ -162,6 +163,14 @@ class Mutations:
                         entities=[{'ref':'target','action':'reference','entity_id':obj['id']}],
                         facts=[{'subject_ref':'target','predicate':change.predicate,'value':value.model_dump(),
                             'quotes':[q.model_dump() for q in replacement.quotes]}]))
+                    if isinstance(value,NumberValue):
+                        old_units={fact_value(f).get('unit','') for f in selected if fact_value(f).get('type')=='number'}
+                        if len(old_units)==1:
+                            original_unit=next(iter(old_units))
+                            if unit_label_matches(original_unit,value.unit) or unit_label_matches(value.unit,original_unit):
+                                # Evidence is checked against the submitted label above;
+                                # preserve an equivalent old label to avoid splitting sums.
+                                value=value.model_copy(update={'unit':original_unit})
                 target=ctx['objects'].get(replacement.object_id) if replacement.object_id else None
                 if replacement.object_id:require(target and available(target),'INVALID_REFERENCE','The relation target is unavailable.',409)
                 shape=(bool(target),'entity' if target else value.type,cardinality)
@@ -175,7 +184,7 @@ class Mutations:
                     'predicate':change.predicate,'object_id':target['id'] if target else '',
                     'value_json':'' if target else encoded(literal),'number_scaled':scaled,
                     'value_type':'object' if target else literal['type'],'unit':literal.get('unit',''),
-                    'cardinality':cardinality,'certainty':'asserted','active':True,'version':1,
+                    'cardinality':cardinality,'certainty':replacement.certainty,'active':True,'version':1,
                     'record_state':'active','recording_policy_version':2,'created_at':ctx['now'],
                     'recorded_at':ctx['now'],'recorded_by':scope.actor,'origin_channel':'mcp',
                     'supersedes':[f['id'] for f in selected]}
@@ -183,7 +192,7 @@ class Mutations:
                 require(candidate['value_key'] not in {f['value_key'] for f,_ in replacements},
                         'INVALID_ARGUMENT','Replacement values must be distinct.')
                 replacements.append((candidate,replacement.quotes))
-            if ({(value_key(f),certainty(f)) for f in selected}=={(f['value_key'],'asserted') for f,_ in replacements}):continue
+            if ({(value_key(f),certainty(f)) for f in selected}=={(f['value_key'],f['certainty']) for f,_ in replacements}):continue
             self._ensure_sources(tx,ctx)
             before=deepcopy(selected)
             for old in selected:
@@ -295,6 +304,12 @@ class Mutations:
                     'RESTORE_CONFLICT','A later deletion owns this resource; it cannot be undone by this request.',409)
             if node.get('deleted_by')==data.delete_receipt_id:restore.append((event,node))
         before_current={f['id'] for f in ctx['facts'].values() if current_fact(f,ctx['objects'])}
+        future_entities={e['target_id'] for e,_ in restore if e['resource']=='entity'}
+        for event,node in restore:
+            if event['resource']=='fact' and node.get('object_id'):
+                require(all(oid in ctx['objects'] and (present(ctx['objects'][oid]) or oid in future_entities)
+                    for oid in (node['subject_id'],node['object_id'])),
+                    'RESTORE_DEPENDENCY','A relation endpoint is deleted or missing outside this restoration.',409)
         for event,before in restore:
             resource=event['resource'];label=LABELS[resource];tid=before['id']
             after={k:v for k,v in before.items() if k not in {'deleted_by','deleted_at'}}

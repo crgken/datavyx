@@ -25,6 +25,7 @@ class Settings:
     recording_enabled: bool = False
     recording_actors: tuple[str, ...] = ()
     purge_ledger_dir: str = ''
+    purge_ledger_secret: str = field(default='',repr=False)
 
     def __post_init__(self):
         uri = urlsplit(self.uri)
@@ -54,6 +55,8 @@ class Settings:
         require(type(self.recording_enabled) is bool, 'INVALID_CONFIGURATION', 'Recording mode must be boolean.')
         require(self.mode=='test' or bool(self.purge_ledger_dir) and Path(self.purge_ledger_dir).is_absolute(),
                 'INVALID_CONFIGURATION','Production requires an explicit persistent erasure ledger directory.')
+        require(self.mode=='test' or len(self.purge_ledger_secret)>=32,'INVALID_CONFIGURATION',
+                'Production requires a dedicated persistent erasure signing key.')
 
     @classmethod
     def from_env(cls):
@@ -69,7 +72,7 @@ class Settings:
                 mode=os.getenv('MCP_MODE','production'),max_records=int(os.getenv('MCP_MAX_RECORDS','10000')),
                 organization=os.getenv('MCP_AUTH_ORGANIZATION',''), recording_enabled=recording=='1',
                 recording_actors=tuple(s.strip() for s in os.getenv('MCP_RECORDING_ACTORS','').split(',') if s.strip()),
-                purge_ledger_dir=os.getenv('MCP_PURGE_LEDGER_DIR',''))
+                purge_ledger_dir=os.getenv('MCP_PURGE_LEDGER_DIR',''),purge_ledger_secret=os.getenv('MCP_PURGE_LEDGER_SECRET',''))
         except (KeyError, ValueError):
             from .errors import KnowledgeError
             raise KnowledgeError('INVALID_CONFIGURATION','Required MCP configuration is missing or invalid.') from None

@@ -1,6 +1,6 @@
 import unittest
 from pydantic import ValidationError
-from mcp_backend.contracts import FindInput,TargetSelection
+from mcp_backend.contracts import FindInput,TargetSelection,BooleanValue
 from mcp_backend.mutation_contracts import UpdateInput,SelectionMutation,HistoryInput,PurgeInput,MUTATION_INPUTS
 
 
@@ -56,3 +56,8 @@ class MutationContractTests(unittest.TestCase):
             expected_revision=0,expected_count=0,selection_digest='a'*64)
         with self.assertRaises(ValidationError):PurgeInput.model_validate(body)
         body['request_id']='ef6fab60-6808-4df1-af21-f7ee92d8670c';PurgeInput.model_validate(body)
+
+    def test_boolean_legacy_values_are_explicit_and_not_coerced(self):
+        self.assertIs(BooleanValue(type='boolean',boolean=False).boolean,False)
+        for value in ('false','true',0,1):
+            with self.subTest(value=value),self.assertRaises(ValidationError):BooleanValue(type='boolean',boolean=value)

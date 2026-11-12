@@ -53,5 +53,12 @@ class SettingsTests(unittest.TestCase):
     def test_production_cannot_omit_the_external_erasure_boundary(self):
         with self.assertRaises(KnowledgeError):settings(mode='production',password='test-only',resource_url='https://mcp.example/mcp')
 
+    def test_cursor_rotation_does_not_invalidate_dedicated_erasure_signatures(self):
+        from mcp_backend.purge_ledger import PurgeLedger
+        original=settings(purge_ledger_secret='stable-erasure-key-'*3)
+        rotated=replace(original,cursor_secret='rotated-cursor-key-'*3)
+        self.assertEqual(PurgeLedger(original).signature({'operation':'opaque'}),PurgeLedger(rotated).signature({'operation':'opaque'}))
+        self.assertNotIn(original.purge_ledger_secret,repr(original))
+
 
 if __name__=='__main__':unittest.main()

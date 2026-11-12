@@ -85,6 +85,7 @@ PY
   ;;
 rollback)
   [[ $(cat "$state") == "$commit" && ! -e "$backup/NEW_WRITES_MAY_EXIST" ]] || { echo "Rollback blocked: new writes may exist. Preserve them and use a forward fix." >&2; exit 2; }
+  python3 "$release/deploy/mcp/run_env.py" --env "$config" --python "$backend/.venv-mcp/bin/python" --backend "$backend" --production-closed --action rollback-check
   systemctl stop atlasai-mcp.service
   install -o root -g root -m 0644 "$backup/kb.datavyx.com.before" "$nginx"
   nginx -t

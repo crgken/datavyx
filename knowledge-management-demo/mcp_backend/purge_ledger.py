@@ -16,6 +16,7 @@ class PurgeLedger:
     def root(self,dataset=None,required=False):
         configured=self.settings.purge_ledger_dir
         if configured:
+            require(len(self.settings.purge_ledger_secret)>=32,'PURGE_LEDGER_UNAVAILABLE','A dedicated erasure signing key is required.',503)
             root=Path(configured)
             require(root.is_absolute() and not root.is_symlink() and root.is_dir(),
                     'PURGE_LEDGER_UNAVAILABLE','The persistent purge ledger is not ready.',503)
@@ -34,7 +35,9 @@ class PurgeLedger:
         require(len(operation)==64 and all(c in '0123456789abcdef' for c in operation),'INVALID_ARGUMENT','Invalid operation identity.')
         return self.root(dataset,True)/(digest(dataset)+'-'+operation+'.json')
 
-    def signature(self,body):return hmac.new(self.settings.cursor_secret.encode(),encoded(body).encode(),hashlib.sha256).hexdigest()
+    def signature(self,body):
+        secret=self.settings.purge_ledger_secret or self.settings.cursor_secret
+        return hmac.new(secret.encode(),encoded(body).encode(),hashlib.sha256).hexdigest()
 
     def load(self,path):
         require(not path.is_symlink() and path.stat().st_size<=2*1024*1024,'PURGE_LEDGER_INVALID','Invalid purge manifest.',503)

@@ -35,6 +35,7 @@ class Replacement(StrictModel):
     value: Value | None = None
     object_id: Identifier | None = None
     inherit_unit: bool = False
+    certainty: Literal['asserted','estimated','uncertain'] = 'asserted'
     quotes: list[Quote] = Field(min_length=1,max_length=8)
 
     @model_validator(mode='after')

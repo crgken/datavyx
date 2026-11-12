@@ -4,6 +4,8 @@ M00–M09扩展：当前实现有12工具，新scope为update/delete/restore/his
 
 永久清除清单必须持久保存在数据库卷/不可变发布目录之外：候选`/var/lib/atlasai-mcp/candidate-purge-ledger`，正式`/var/lib/atlasai-mcp/purge-ledger`。服务账号ubuntu、目录0700/文件0600，systemd只开放对应ReadWritePaths；MCP_PURGE_LEDGER_DIR必须显式匹配。升级/回滚不得覆盖或清空该目录。首次升级旧候选安装器前先创建目录并更新受保护配置；后续新安装器会准备目录。
 
+MCP_PURGE_LEDGER_SECRET为独立持久签名密钥（至少32字符，repr/日志不显示），应与受保护MCP配置一起备份到数据库卷之外；不能跟随MCP_CURSOR_SECRET轮换。已存在清单后不得直接替换此密钥，须在受控维护中处理旧签名/幂等指纹兼容再轮换。开发者可自动生成，不要求用户提供模型key。
+
 `python -m scripts.mcp_erasure_recovery --dataset EXACT --action audit|reconcile|apply`为管理恢复入口，不是MCP工具。reconcile核对DB提交标记、至少120秒间隔及无活动事务后才能将未知意图判为aborted；apply拒绝prepared并重放committed清单。正式reconcile/apply要求授权commit与ATLASAI_RELEASE_AUTHORIZED_COMMIT一致、可信安装清单、正式库17693、关闭新增和停旧API。DB备份必须同时记录外部清单边界；恢复后先处理清单再开放任何知识读取。删除/清除后不能切回不理解生命周期的v1候选或旧卷来覆盖数据。
 
 这是新的 MCP 专用发布入口。旧 deploy-lightsail.ps1 / atlasai-apply-release.sh 继续保留历史用途，本次不调用；不构建 Flutter，不重新处理网页资产，不安装旧 requirements 或启动旧 API。
@@ -30,6 +32,8 @@ python deploy/mcp/release_artifact.py build --root . --remote-ref origin/codex/m
 6. 本机健康/401 不代替真实 Auth0/ChatGPT。真实客户端需完成上下文、候选、直接保存、查询、来源及同键回执恢复，并单独记录。
 
 再次安装相同 commit 会先检查已装清单，复用相同源码和已完成的依赖环境；失败的依赖下载可用同一包继续。发现源码漂移直接拒绝。restore-candidate.sh 仅切回已经验证的旧候选并复核健康，不改生产或数据库。依赖、运行代码或必要模板改变才生成新的 Git 候选。
+
+M07后新包必须data_contract=2并包含生命周期及清除模块；旧七工具包不再是可恢复目标，安装健康失败也不自动退回旧代代码。后续进度/报告提交若仅改变文档，不重新打包：使用`release_artifact.py compare --root . --ref origin/codex/mcp-neo4j --archive ARCHIVE --sha256 SHA --commit CANDIDATE`核对运行文件集合与全部hash，正式合并后再对origin/main执行相同比较。发布授权和脚本绑定已验证候选运行commit，同时记录main文档commit映射；若任何运行文件变化必须重新验证和锁定候选。
 
 ## 历史兼容与恢复
 

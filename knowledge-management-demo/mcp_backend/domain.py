@@ -4,7 +4,7 @@ from decimal import Decimal
 import hashlib
 import json
 import unicodedata
-from .contracts import EntityCreate, NumberValue
+from .contracts import EntityCreate, NumberValue,BooleanValue
 from .errors import require
 from .unit_labels import unit_label_matches
 
@@ -61,6 +61,7 @@ def validate_record(data):
 
 def literal_fields(value):
     if isinstance(value,NumberValue):return number_fields(value)
+    if isinstance(value,BooleanValue):return {'type':'boolean','value':value.boolean,'unit':''},None
     return {'type':'text','value':value.text,'unit':''},None
 
 

@@ -6,6 +6,8 @@ from pathlib import Path
 import tarfile
 import tempfile
 import unittest
+from unittest.mock import patch
+from types import SimpleNamespace
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -25,10 +27,10 @@ class ReleaseTests(unittest.TestCase):
             self.assertTrue(path.is_relative_to(parent))  # Verified before automatic recursive cleanup.
             yield path
 
-    def archive(self, folder, extra=None, bad_hash=False, duplicate=False, link=False):
+    def archive(self, folder, extra=None, bad_hash=False, duplicate=False, link=False,data_contract=2):
         files = {name: b'pass\n' for name in release.REQUIRED}
         if extra: files[extra] = b'forbidden'
-        manifest = {'format': 1, 'commit': 'a'*40, 'runtime': 'python3.12',
+        manifest = {'format': 1, 'data_contract':data_contract,'commit': 'a'*40, 'runtime': 'python3.12',
             'files': {n: {'sha256': release.sha(v), 'size': len(v)} for n, v in files.items()}}
         if bad_hash: manifest['files'][next(iter(files))]['sha256'] = '0'*64
         path = folder/'release.tar'
@@ -84,6 +86,22 @@ class ReleaseTests(unittest.TestCase):
             with self.assertRaises(ValueError): run_env.read_env(path)
             path.write_text('MCP_MODE=test\nMCP_MODE=production', encoding='utf-8')
             with self.assertRaises(ValueError): run_env.read_env(path)
+
+    def test_append_only_candidate_cannot_be_a_lifecycle_rollback_target(self):
+        with self.directory() as folder:
+            path,checksum=self.archive(folder,data_contract=1)
+            with self.assertRaises(ValueError):release.verify(path,checksum,'a'*40)
+
+    def test_recovery_loader_passes_literal_arguments_without_model_environment(self):
+        with self.directory() as folder:
+            path=folder/'mcp-config.env';path.write_text('MCP_MODE=test\nMCP_CURSOR_SECRET=literal-safe-value\n',encoding='utf-8')
+            argv=['run_env','--env',str(path),'--python','python','--backend',str(folder),
+                '--action','erasure-audit','--dataset','literal-$(no-command)-`no-command`']
+            with patch('sys.argv',argv),patch.dict('os.environ',{'LLM_API_KEY':'must-not-be-inherited'}),patch.object(run_env.subprocess,'run',return_value=SimpleNamespace(returncode=0)) as run:
+                self.assertEqual(run_env.main(),0)
+                command=run.call_args.args[0];env=run.call_args.kwargs['env']
+                self.assertIsInstance(command,list);self.assertIn(argv[-1],command)
+                self.assertNotIn('LLM_API_KEY',env);self.assertFalse(run.call_args.kwargs.get('shell',False))
 
 
 if __name__ == '__main__': unittest.main()

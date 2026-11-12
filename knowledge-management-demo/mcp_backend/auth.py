@@ -45,12 +45,13 @@ class Authentication:
         subject=claims['sub']
         require(client in self.settings.clients and isinstance(subject,str) and 0<len(subject)<=200
                 and not subject.endswith('@clients') and type(claims['exp']) is int and type(claims['iat']) is int
+                and ('azp' not in claims or 'client_id' not in claims or claims['azp']==claims['client_id'])
                 and (not self.settings.organization or claims.get('org_id')==self.settings.organization),
                 'UNAUTHENTICATED','Token identity or client is not permitted.',401)
         scopes=claims.get('scope','')
         require(isinstance(scopes,str),'UNAUTHENTICATED','Token scopes are invalid.',401)
         permissions=frozenset(p for p in ('read','record') if 'knowledge:'+p in scopes.split())
-        require('read' in permissions,'PERMISSION_DENIED','The token requires knowledge:read.',403)
+        require('read' in permissions,'PERMISSION_DENIED','The token requires knowledge:read.',403,required_scope='knowledge:read')
         return Identity(digest([self.settings.issuer,subject]),self.settings.issuer,subject,client,
                         permissions,claims['exp'],hashlib.sha256(token.encode()).hexdigest())
 

@@ -1,5 +1,6 @@
 """Explicit bounded Neo4j transactions, independent from the old Store."""
 from dataclasses import dataclass
+import logging
 import time
 from neo4j import GraphDatabase
 from neo4j.exceptions import Neo4jError,ServiceUnavailable,SessionExpired
@@ -33,13 +34,14 @@ class Repository:
                     tx.commit()
                     return result
         except KnowledgeError:raise
-        except (Neo4jError,ServiceUnavailable,SessionExpired):
+        except (Neo4jError,ServiceUnavailable,SessionExpired) as error:
+            logging.getLogger('atlasai.mcp').error('database_failure exception_type=%s',type(error).__name__)
             raise KnowledgeError('SERVICE_UNAVAILABLE','The database operation did not complete.',503,True) from None
 
     def migrate(self):
         # DDL is explicit, never run while importing a package or on tool calls.
         with self.driver.session(database=self.settings.database) as session:
-            for label in ('KDObject','KDFact','KDSource','KDData','KDWorkspace','KDWorkspaceMember','KDMCPRequest','KDMCPPredicate'):
+            for label in ('KDObject','KDFact','KDSource','KDData','KDWorkspace','KDWorkspaceMember','KDMCPRequest','KDMCPPredicate','KDMCPMigration','KDMCPSchema'):
                 session.run(f'CREATE CONSTRAINT mcp_{label.lower()}_id IF NOT EXISTS FOR (n:{label}) REQUIRE n.id IS UNIQUE').consume()
             session.run('CREATE CONSTRAINT mcp_object_identity IF NOT EXISTS FOR (o:KDObject) REQUIRE (o.dataset,o.identity_key) IS UNIQUE').consume()
             session.run('CREATE INDEX mcp_fact_subject IF NOT EXISTS FOR (f:KDFact) ON (f.dataset,f.subject_id,f.predicate)').consume()
@@ -48,7 +50,8 @@ class Repository:
     @staticmethod
     def authorize(tx,scope,permission='read'):
         require(scope.expires>time.time(),'UNAUTHENTICATED','Authentication expired.',401)
-        require(permission in scope.permissions,'PERMISSION_DENIED','The token does not grant this operation.',403)
+        require(permission in scope.permissions,'PERMISSION_DENIED','The token does not grant this operation.',403,
+                required_scope='knowledge:'+permission)
         row=tx.run('MATCH (m:KDWorkspaceMember {workspace_id:$w,actor:$a,enabled:true}) '
             'MATCH (w:KDWorkspace {id:m.workspace_id,status:"active"}) '
             'RETURN m.role AS role,m.dataset AS dataset,w.dataset AS bound',w=scope.workspace_id,a=scope.actor).single()

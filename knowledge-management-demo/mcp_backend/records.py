@@ -24,6 +24,11 @@ class Records:
 
     def _sources(self, tx, scope):
         limit = self.repo.settings.max_records + 1
+        size = tx.run("MATCH (s:KDSource {dataset:$d}) WHERE coalesce(s.valid,true) "
+            "AND coalesce(s.record_state,'active')<>'action_draft' "
+            "RETURN count(s) AS n,coalesce(sum(size(coalesce(s.message,''))),0) AS chars", d=scope.dataset).single()
+        require(size['n'] < limit and size['chars'] <= 16*1024*1024, 'LIMIT_EXCEEDED',
+                'The source directory exceeds this query resource limit.', 413)
         rows = [dict(row['s']) for row in tx.run(
             "MATCH (s:KDSource {dataset:$d}) WHERE coalesce(s.valid,true) "
             "AND coalesce(s.record_state,'active')<>'action_draft' "

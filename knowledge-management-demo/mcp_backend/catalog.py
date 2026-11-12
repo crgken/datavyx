@@ -70,7 +70,7 @@ class Catalog:
                         'recording_available': 'record' in permissions and (self.repo.settings.mode == 'test'
                             or self.repo.settings.recording_enabled or scope.actor in self.repo.settings.recording_actors),
                         'unit_rule': 'explicit_source_quote_cldr_currency_v1', 'scope': 'authorized_workspace',
-                        'supported_operations': ['record','query','update','delete','restore','purge','history'],
+                        'supported_operations': ['record','query','update','delete','restore','history'],
                         'mutation_schema_version':'2.0','deletion_is_archive':False,
                         'limits':{'mutation_changes':50,'selection_resources':1000,'transaction_seconds':20},
                         'historical_read_requires_explicit_request':True}}

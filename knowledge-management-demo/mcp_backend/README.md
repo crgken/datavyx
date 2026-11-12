@@ -4,8 +4,10 @@ Development branch: `codex/mcp-neo4j`. Current unit status is in
 [the progress record](../../docs/50-运行记录/MCP改造开发进度-2026-11-12.md).
 The approved mutation extension and its actual status are in
 [M00–M09 progress](../../docs/50-运行记录/MCP修改删除开发进度-2026-11-12.md).
-Twelve tools include versioned corrections, recoverable deletion/restoration,
-authorized history and separately scoped irreversible erasure. There is no approval tool.
+Eleven public tools include versioned corrections, recoverable deletion/restoration
+and authorized history. Permanent erasure is deferred: it is neither discoverable
+nor callable, even with a cached tool name or an old purge scope. Historical erasure
+guards and internal recovery code remain. There is no approval tool.
 This package never imports `demo` or initializes its Agent, approval or Graphiti workers.
 
 ## Environment
@@ -48,7 +50,7 @@ the exact generated `mcp-test-*` datasets.
 
 Reuse the existing Auth0 tenant/subjects, not its SPA credentials or API keys.
 Configure a dedicated MCP API resource and `knowledge:read` / `knowledge:record`
-plus update/delete/restore/history/purge/bulk permissions (each with `knowledge:`);
+plus update/delete/restore/history/bulk permissions (each with `knowledge:`);
 the canonical resource URL and intended token audience must match
 in production. Allowlist the actual ChatGPT OAuth client, and copy its actual
 callback URI rather than inventing a fixed one.

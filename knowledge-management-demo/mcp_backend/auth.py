@@ -6,7 +6,7 @@ import jwt
 from .domain import digest
 from .errors import KnowledgeError,require
 from .neo4j_repository import Scope
-from .permissions import PERMISSIONS
+from .permissions import PUBLIC_PERMISSIONS
 
 
 @dataclass(frozen=True)
@@ -28,7 +28,7 @@ class Authentication:
 
     def protected_resource_metadata(self):
         return {'resource':self.settings.resource_url,'authorization_servers':[self.settings.issuer],
-                'scopes_supported':['knowledge:'+p for p in sorted(PERMISSIONS)],'bearer_methods_supported':['header']}
+                'scopes_supported':['knowledge:'+p for p in sorted(PUBLIC_PERMISSIONS)],'bearer_methods_supported':['header']}
 
     def authenticate(self,authorization):
         require(isinstance(authorization,str) and authorization.startswith('Bearer ') and len(authorization)<=16384,
@@ -51,7 +51,7 @@ class Authentication:
                 'UNAUTHENTICATED','Token identity or client is not permitted.',401)
         scopes=claims.get('scope','')
         require(isinstance(scopes,str),'UNAUTHENTICATED','Token scopes are invalid.',401)
-        permissions=frozenset(p for p in PERMISSIONS if 'knowledge:'+p in scopes.split())
+        permissions=frozenset(p for p in PUBLIC_PERMISSIONS if 'knowledge:'+p in scopes.split())
         require('read' in permissions,'PERMISSION_DENIED','The token requires knowledge:read.',403,required_scope='knowledge:read')
         return Identity(digest([self.settings.issuer,subject]),self.settings.issuer,subject,client,
                         permissions,claims['exp'],hashlib.sha256(token.encode()).hexdigest())

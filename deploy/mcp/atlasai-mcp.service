@@ -1,6 +1,7 @@
 [Unit]
 Description=AtlasAI deterministic knowledge MCP
-After=network-online.target docker.service
+Requires=atlasai-knowledge-db.service
+After=network-online.target docker.service atlasai-knowledge-db.service
 
 [Service]
 Type=simple

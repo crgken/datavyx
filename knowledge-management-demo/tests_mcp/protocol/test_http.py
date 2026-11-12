@@ -17,7 +17,7 @@ from mcp.client.streamable_http import streamable_http_client
 import uvicorn
 from mcp_backend.auth import Authentication
 from mcp_backend.server import create_app,TOOL_INPUTS,WRITES,DESTRUCTIVE
-from mcp_backend.permissions import PERMISSIONS
+from mcp_backend.permissions import PERMISSIONS,PUBLIC_PERMISSIONS
 from uuid import uuid4
 from tests_mcp.integration.test_mutations import instruction
 from mcp_backend.neo4j_repository import Repository
@@ -97,7 +97,7 @@ class HTTPProtocolTests(unittest.TestCase):
         metadata = json.loads(raw)
         self.assertEqual(metadata['resource'], self.settings.resource_url)
         self.assertEqual(metadata['authorization_servers'], [self.settings.issuer])
-        self.assertEqual(set(metadata['scopes_supported']), {'knowledge:'+p for p in PERMISSIONS})
+        self.assertEqual(set(metadata['scopes_supported']), {'knowledge:'+p for p in PUBLIC_PERMISSIONS})
 
     def test_real_protocol_tools_and_complete_save_query_source_receipt(self):
         async def run():
@@ -110,8 +110,9 @@ class HTTPProtocolTests(unittest.TestCase):
                     self.assertEqual(tool.annotations.destructive_hint,tool.name in DESTRUCTIVE)
                     self.assertEqual(tool.meta['securitySchemes'][0]['type'], 'oauth2')
                 declared={tool.name:set(tool.meta['securitySchemes'][0]['scopes']) for tool in listed.tools}
-                self.assertEqual(set().union(*declared.values()),{'knowledge:'+p for p in PERMISSIONS})
-                for name in ('delete_information','restore_information','purge_information'):
+                self.assertEqual(set().union(*declared.values()),{'knowledge:'+p for p in PUBLIC_PERMISSIONS})
+                self.assertNotIn('purge_information',declared)
+                for name in ('delete_information','restore_information'):
                     self.assertIn('knowledge:bulk',declared[name])
                 self.assertEqual(declared['get_context'],{'knowledge:read'})
                 context = await client.call_tool('get_context', {'workspace_id': self.scope.workspace_id})
@@ -139,7 +140,7 @@ class HTTPProtocolTests(unittest.TestCase):
     def test_legacy_initialize_handshake_is_supported(self):
         async def run():
             async with Client(AuthenticatedTransport(self.settings.resource_url, self.token()), mode='legacy', cache=None) as client:
-                self.assertEqual(len((await client.list_tools()).tools), 12)
+                self.assertEqual(len((await client.list_tools()).tools), 11)
                 result = await client.call_tool('get_context', {'workspace_id': self.scope.workspace_id})
                 self.assertFalse(result.is_error)
         asyncio.run(run())
@@ -163,7 +164,7 @@ class HTTPProtocolTests(unittest.TestCase):
             self.assertEqual(status, 401); self.assertNotIn(token.encode(), body)
             self.assertIn('resource_metadata=', headers['WWW-Authenticate'])
 
-    def test_new_mutations_over_real_http_and_purged_requests_cannot_recreate_content(self):
+    def test_new_mutations_over_real_http_and_cached_purge_tool_cannot_delete(self):
         async def run():
             token=self.token(scope=' '.join('knowledge:'+p for p in sorted(PERMISSIONS)))
             async with Client(AuthenticatedTransport(self.settings.resource_url,token),cache=None) as client:
@@ -184,13 +185,20 @@ class HTTPProtocolTests(unittest.TestCase):
                     'expected_revision':deleted['revision']})
                 history=await call('get_history',{'entity_id':oid});self.assertEqual(history['total'],3)
                 selection['state']='all';matched=await call('find_records',{'selection':selection})
-                purged=await call('purge_information',{**instruction(str(uuid4())),'selection':selection,
+                refused=await client.call_tool('purge_information',{'workspace_id':self.scope.workspace_id,
+                    **instruction(str(uuid4())),'selection':selection,
                     'expected_revision':matched['revision'],'expected_count':matched['selection_count'],
                     'selection_digest':matched['selection_digest']})
-                self.assertEqual(purged['removed_counts']['entity'],1)
-                old=await call('get_receipt',{'request_id':data['request_id']});self.assertEqual(old['receipt']['status'],'purged')
-                replay=await client.call_tool('record_information',{'workspace_id':self.scope.workspace_id,**data})
-                self.assertTrue(replay.is_error);self.assertEqual(replay.structured_content['error']['code'],'PREVIOUSLY_PURGED')
+                self.assertTrue(refused.is_error)
+                self.assertEqual(refused.structured_content['error']['code'],'UNKNOWN_TOOL')
+                current=await call('get_record',{'entity_id':oid})
+                self.assertEqual(current['facts']['rows'][0]['value']['value'],'65')
+                old=await call('get_receipt',{'request_id':data['request_id']})
+                self.assertEqual(old['receipt']['status'],'recorded')
+                self.assertEqual((await call('get_history',{'entity_id':oid}))['total'],3)
+                context=await call('get_context',{})
+                self.assertNotIn('purge',context['permissions'])
+                self.assertNotIn('purge',context['profile']['supported_operations'])
         asyncio.run(run())
 
     def test_missing_new_scope_requests_the_correct_scope_but_role_denial_does_not_reauthorize(self):

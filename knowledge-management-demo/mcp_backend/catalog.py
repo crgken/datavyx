@@ -2,6 +2,7 @@
 from collections import defaultdict
 from .domain import available, digest, fact_value
 from .paging import Pager
+from .lifecycle import present,current_fact
 
 
 def vocabulary(objects, facts):
@@ -9,12 +10,14 @@ def vocabulary(objects, facts):
     identities = set()
     predicates = defaultdict(lambda: {'cardinalities': set(), 'units': set(), 'total': 0})
     for obj in objects.values():
+        if not present(obj):continue
         kind = obj.get('kind', '')
         types[kind]['total'] += 1
         types[kind]['active'] += int(available(obj))
         if obj.get('identifier'):
             identities.add((kind, obj.get('namespace', '')))
     for fact in facts:
+        if not current_fact(fact,objects):continue
         subject = objects.get(fact['subject_id'])
         if not subject:
             continue

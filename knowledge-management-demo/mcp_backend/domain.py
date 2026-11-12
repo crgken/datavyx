@@ -72,7 +72,7 @@ def certainty(fact):
 
 
 def available(obj):
-    return not obj.get('archived',False) and obj.get('record_state','active')!='action_draft'
+    return not obj.get('deleted_by') and not obj.get('archived',False) and obj.get('record_state','active')!='action_draft'
 
 
 def fact_value(fact):
@@ -96,6 +96,7 @@ def eligibility(objects,facts):
     reasons={}
     for fact in facts:
         reasons[fact['id']]=[]
+        if fact.get('deleted_by'):reasons[fact['id']].append('deleted')
         if not fact.get('active',True):reasons[fact['id']].append('historical')
         if fact.get('record_state')=='action_draft':reasons[fact['id']].append('unexecuted_proposal')
         if not all(oid in objects and available(objects[oid]) for oid in (fact['subject_id'],fact.get('object_id')) if oid):
@@ -103,7 +104,7 @@ def eligibility(objects,facts):
         if any(oid in objects and not objects[oid].get('confirmed',True) for oid in (fact['subject_id'],fact.get('object_id')) if oid):
             reasons[fact['id']].append('uncertain_identity')
         if certainty(fact)!='asserted':reasons[fact['id']].append('uncertain')
-        if not any(r in reasons[fact['id']] for r in ('historical','unexecuted_proposal','unavailable_entity','uncertain_identity')):
+        if not any(r in reasons[fact['id']] for r in ('historical','deleted','unexecuted_proposal','unavailable_entity','uncertain_identity')):
             slots[(fact['subject_id'],fact['predicate'])].append(fact)
     for group in slots.values():
         if any(f.get('cardinality','one')=='one' for f in group) and len({value_key(f) for f in group})>1:

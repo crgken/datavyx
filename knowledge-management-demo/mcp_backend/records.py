@@ -2,10 +2,12 @@
 from .domain import available, certainty, eligibility, fact_value, key
 from .errors import require
 from .paging import Pager
+from .lifecycle import current_source,current_fact
 
 
 def public_object(obj):
     return {field: obj.get(field, '') for field in ('id', 'kind', 'name', 'identifier', 'namespace')} | {
+        'version':obj.get('version',1),'deleted':bool(obj.get('deleted_by')),
         'identity_status': 'asserted' if obj.get('confirmed', True) else 'uncertain',
         'archived': obj.get('archived', False)}
 
@@ -22,7 +24,7 @@ class Records:
         self.repo = repository
         self.pager = Pager(repository.settings.cursor_secret)
 
-    def _sources(self, tx, scope):
+    def _sources(self, tx, scope, history=False):
         limit = self.repo.settings.max_records + 1
         size = tx.run("MATCH (s:KDSource {dataset:$d}) WHERE coalesce(s.valid,true) "
             "AND coalesce(s.record_state,'active')<>'action_draft' "
@@ -34,10 +36,18 @@ class Records:
             "AND coalesce(s.record_state,'active')<>'action_draft' "
             'RETURN properties(s) AS s ORDER BY s.id LIMIT $n', d=scope.dataset, n=limit)]
         require(len(rows) < limit, 'LIMIT_EXCEEDED', 'The source directory exceeds this query resource limit.', 413)
-        return rows
+        return rows if history else [s for s in rows if current_source(tx,scope.dataset,s)]
 
     def find_records(self, scope, data):
         def read(tx, revision):
+            if data.selection is not None:
+                from .selection import select_targets
+                require(not any((data.text,data.kind,data.identifier,data.namespace)),'INVALID_ARGUMENT',
+                        'Selection cannot be combined with legacy candidate filters.')
+                rows,signature,counts=select_targets(self.repo,tx,scope,data.selection)
+                return {**self.pager.page(rows,scope,revision,data,'selection',data.cursor),
+                    'search_mode':'field_match','selection_digest':signature,'selection_count':len(rows),
+                    'selection_revision':revision,'resource_counts':counts}
             rows = []
             if data.record_type in {'entity', 'all'}:
                 objects, _ = self.repo.snapshot(tx, scope)
@@ -66,12 +76,14 @@ class Records:
 
     def get_record(self, scope, data):
         def read(tx, revision):
+            if data.include_history:self.repo.authorize(tx,scope,'history')
             objects, facts = self.repo.snapshot(tx, scope)
             obj = objects.get(data.entity_id)
             require(obj and (data.include_history or available(obj)), 'NOT_FOUND', 'The record is not available.', 404)
             reasons = eligibility(objects, facts)
             selected = [f for f in facts if (f['subject_id'] == obj['id'] or f.get('object_id') == obj['id'])
                         and (data.include_history or (f.get('active', True)
+                             and not f.get('deleted_by')
                              and 'unavailable_entity' not in reasons[f['id']]))]
             support = {}
             for row in tx.run('MATCH (s:KDSource {dataset:$d})-[:KD_SUPPORTS]->(f:KDFact {dataset:$d}) '
@@ -95,14 +107,20 @@ class Records:
 
     def get_sources(self, scope, data):
         def read(tx, revision):
-            sources = {s['id']: s for s in self._sources(tx, scope)}
+            if data.include_history:self.repo.authorize(tx,scope,'history')
+            sources = {s['id']: s for s in self._sources(tx, scope,data.include_history)}
             if data.source_id:
                 require(data.source_id in sources, 'NOT_FOUND', 'The source is not available.', 404)
                 selected = [(sources[data.source_id], [])]
             else:
                 found = tx.run("MATCH (f:KDFact {dataset:$d,id:$id}) WHERE coalesce(f.record_state,'active')<>'action_draft' "
-                               'RETURN f.id AS id', d=scope.dataset, id=data.fact_id).single()
+                               'RETURN properties(f) AS f', d=scope.dataset, id=data.fact_id).single()
                 require(found, 'NOT_FOUND', 'The fact is not available.', 404)
+                if not data.include_history:
+                    objects,_=self.repo.snapshot(tx,scope)
+                    require(current_fact(found['f'],objects) and all(available(objects[oid]) for oid in
+                        (found['f'].get('subject_id'),found['f'].get('object_id')) if oid),
+                        'NOT_FOUND','The current fact is not available.',404)
                 selected = [(sources[row['id']], row['quotes']) for row in tx.run(
                     'MATCH (s:KDSource {dataset:$d})-[e:KD_SUPPORTS]->(:KDFact {dataset:$d,id:$id}) '
                     'RETURN s.id AS id,coalesce(e.quotes,CASE WHEN e.quote IS NULL THEN [] ELSE [e.quote] END) AS quotes '

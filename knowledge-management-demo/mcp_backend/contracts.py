@@ -1,4 +1,5 @@
 """Version 1 tool contracts. Business vocabulary is data, never executable code."""
+from __future__ import annotations
 from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -141,6 +142,7 @@ class FindInput(PageInput):
     identifier: str = Field(default="", max_length=200)
     namespace: str = Field(default="", max_length=200)
     record_type: Literal["entity", "source", "all"] = "entity"
+    selection: 'TargetSelection | None' = None
 
 
 class GetInput(Versioned):
@@ -154,6 +156,7 @@ class GetInput(Versioned):
 class SourcesInput(PageInput):
     source_id: Identifier | None = None
     fact_id: Identifier | None = None
+    include_history: bool = False
 
     @model_validator(mode="after")
     def one_target(self):
@@ -204,6 +207,29 @@ class QueryInput(PageInput):
         return self
 
 
+class TargetSelection(StrictModel):
+    resource: Literal['entity', 'fact', 'source', 'workspace']
+    ids: list[Identifier] = Field(default_factory=list, max_length=1000)
+    kind: str = Field(default='', max_length=100)
+    namespace: str = Field(default='', max_length=200)
+    identifier: str = Field(default='', max_length=200)
+    subject_id: Identifier | None = None
+    predicate: str = Field(default='', max_length=100)
+    filters: list[Filter] = Field(default_factory=list, max_length=8)
+    state: Literal['present', 'deleted'] = 'present'
+
+    @model_validator(mode='after')
+    def compatible(self):
+        if len(set(self.ids)) != len(self.ids):raise ValueError('Target IDs must be unique.')
+        if self.resource != 'entity' and (self.kind or self.namespace or self.identifier or self.filters):
+            raise ValueError('Entity filters require entity selection.')
+        if self.resource != 'fact' and (self.subject_id or self.predicate):
+            raise ValueError('Fact filters require fact selection.')
+        if self.resource == 'workspace' and (self.ids or self.state != 'present'):
+            raise ValueError('Workspace selection covers all present canonical resources.')
+        return self
+
+
 class ReceiptInput(Versioned):
     request_id: RequestId
 
@@ -223,6 +249,7 @@ class RecordReceipt(StrictModel):
     conflict_count: int = Field(ge=0)
     uncertain_count: int = Field(ge=0)
     idempotent: bool = False
+    current_state: Literal['current','changed','deleted'] = 'current'
 
 
 class PageResult(StrictModel):
@@ -246,6 +273,10 @@ class ContextResult(PageResult):
 
 class FindResult(PageResult):
     search_mode: Literal['field_match', 'literal_substring']
+    selection_digest: str | None = None
+    selection_count: int | None = None
+    selection_revision: int | None = None
+    resource_counts: dict[str, int] | None = None
 
 
 class RecordResult(StrictModel):
@@ -271,7 +302,36 @@ class QueryResult(PageResult):
 
 class ReceiptResult(StrictModel):
     found: bool
-    receipt: RecordReceipt | None = None
+    receipt: RecordReceipt | OperationReceipt | PurgedReceipt | None = None
+
+
+class OperationReceipt(StrictModel):
+    schema_version: Literal['2.0'] = '2.0'
+    request_id: RequestId
+    receipt_id: Identifier
+    operation: Literal['update', 'delete', 'restore', 'purge']
+    status: Literal['applied', 'noop']
+    revision_before: int = Field(ge=0)
+    revision: int = Field(ge=0)
+    matched_count: int = Field(ge=0)
+    applied_count: int = Field(ge=0)
+    objects_changed: int = Field(ge=0)
+    facts_changed: int = Field(ge=0)
+    sources_changed: int = Field(ge=0)
+    relations_hidden: int = Field(ge=0)
+    recoverable: bool
+    selection_complete: Literal[True] = True
+    idempotent: bool = False
+
+
+class PurgedReceipt(StrictModel):
+    schema_version: Literal['2.0'] = '2.0'
+    status: Literal['purged'] = 'purged'
+    receipt_id: Identifier
+
+
+FindInput.model_rebuild()
+ReceiptResult.model_rebuild()
 
 
 TOOL_INPUTS = {

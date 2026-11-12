@@ -5,6 +5,7 @@ import time
 from neo4j import GraphDatabase
 from neo4j.exceptions import Neo4jError,ServiceUnavailable,SessionExpired
 from .errors import KnowledgeError,require
+from .permissions import ROLE_PERMISSIONS
 
 
 @dataclass(frozen=True)
@@ -41,11 +42,12 @@ class Repository:
     def migrate(self):
         # DDL is explicit, never run while importing a package or on tool calls.
         with self.driver.session(database=self.settings.database) as session:
-            for label in ('KDObject','KDFact','KDSource','KDData','KDWorkspace','KDWorkspaceMember','KDMCPRequest','KDMCPPredicate','KDMCPMigration','KDMCPSchema'):
+            for label in ('KDObject','KDFact','KDSource','KDData','KDWorkspace','KDWorkspaceMember','KDMCPRequest','KDMCPPredicate','KDMCPMigration','KDMCPSchema','KDMCPChange','KDMCPPurgeLedger'):
                 session.run(f'CREATE CONSTRAINT mcp_{label.lower()}_id IF NOT EXISTS FOR (n:{label}) REQUIRE n.id IS UNIQUE').consume()
             session.run('CREATE CONSTRAINT mcp_object_identity IF NOT EXISTS FOR (o:KDObject) REQUIRE (o.dataset,o.identity_key) IS UNIQUE').consume()
             session.run('CREATE INDEX mcp_fact_subject IF NOT EXISTS FOR (f:KDFact) ON (f.dataset,f.subject_id,f.predicate)').consume()
-            session.run("MERGE (s:KDMCPSchema {id:'core'}) SET s.version=1").consume()
+            # Missing per-resource versions read as 1; no rewrite of old canonical properties.
+            session.run("MERGE (s:KDMCPSchema {id:'core'}) SET s.version=1,s.lifecycle_version=2").consume()
 
     @staticmethod
     def authorize(tx,scope,permission='read'):
@@ -55,7 +57,7 @@ class Repository:
         row=tx.run('MATCH (m:KDWorkspaceMember {workspace_id:$w,actor:$a,enabled:true}) '
             'MATCH (w:KDWorkspace {id:m.workspace_id,status:"active"}) '
             'RETURN m.role AS role,m.dataset AS dataset,w.dataset AS bound',w=scope.workspace_id,a=scope.actor).single()
-        roles={'viewer':{'read'},'editor':{'read','record'},'reviewer':{'read','record'},'owner':{'read','record'}}
+        roles=ROLE_PERMISSIONS
         require(row and row['dataset']==scope.dataset==row['bound'] and permission in roles.get(row['role'],set()),
                 'PERMISSION_DENIED','The workspace does not permit this operation.',403)
         revoked=tx.run('MATCH (r:KDMobileRevokedToken {id:$id}) WHERE r.expires>$now RETURN r.id AS id',

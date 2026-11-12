@@ -20,7 +20,10 @@ class Ingestion:
         def read(tx, revision):
             row = tx.run('MATCH (r:KDMCPRequest {dataset:$d,id:$id}) RETURN r.receipt AS receipt',
                          d=scope.dataset, id=request_key(scope, data.request_id)).single()
-            return {'found': bool(row), 'receipt': json.loads(row['receipt']) if row else None}
+            receipt=json.loads(row['receipt']) if row else None
+            if receipt and receipt.get('schema_version','1.0')=='1.0':
+                receipt['current_state']=self._receipt_state(tx,scope,receipt)
+            return {'found': bool(row), 'receipt': receipt}
         return self.repo.scoped(scope, read)
 
     def record_information(self, scope, data):
@@ -29,18 +32,20 @@ class Ingestion:
         rid = request_key(scope, data.request_id)
         def save(tx, revision):
             previous = tx.run('MATCH (r:KDMCPRequest {dataset:$d,id:$id}) '
-                'RETURN r.fingerprint AS fingerprint,r.receipt AS receipt', d=scope.dataset, id=rid).single()
+                'RETURN r.fingerprint AS fingerprint,r.receipt AS receipt,coalesce(r.purged,false) AS purged', d=scope.dataset, id=rid).single()
             if previous:
+                require(not previous['purged'],'PREVIOUSLY_PURGED','This prior request was purged and cannot be replayed.',409)
                 require(previous['fingerprint'] == fingerprint, 'IDEMPOTENCY_CONFLICT',
                         'This request ID was already used for a different body.', 409)
-                return {**json.loads(previous['receipt']), 'idempotent': True}
+                receipt=json.loads(previous['receipt'])
+                return {**receipt, 'idempotent': True,'current_state':self._receipt_state(tx,scope,receipt)}
             require(self.repo.settings.mode == 'test' or self.repo.settings.recording_enabled
                     or scope.actor in self.repo.settings.recording_actors,
                     'MAINTENANCE', 'New recording is temporarily disabled. Queries and receipts remain available.', 503)
             objects, existing = self.repo.snapshot(tx, scope)
             now = time.time()
             metadata = {'dataset': scope.dataset, 'created_at': now, 'recorded_at': now,
-                        'recorded_by': scope.actor, 'origin_channel': 'mcp', 'ingestion_schema_version': '1.0'}
+                        'recorded_by': scope.actor, 'origin_channel': 'mcp', 'ingestion_schema_version': '1.0','version':1}
             source_ids = {s.ref: uuid4().hex for s in data.sources}
             for source in data.sources:
                 tx.run('CREATE (s:KDSource) SET s=$s', s={**metadata, 'id': source_ids[source.ref],
@@ -106,13 +111,17 @@ class Ingestion:
                 if fid not in fact_ids:
                     fact_ids.append(fid)
             reasons = eligibility(objects, facts)
+            touched={entity_ids[r] for f in data.facts for r in (f.subject_ref,f.object_ref) if r}
+            new_ids={entity_ids[e.ref] for e in data.entities if isinstance(e,EntityCreate)}
+            tx.run('MATCH (o:KDObject {dataset:$d}) WHERE o.id IN $ids SET o.version=coalesce(o.version,1)+1',
+                   d=scope.dataset,ids=sorted(touched-new_ids)).consume()
             # Counters describe statements touched by this receipt, not the whole workspace.
             receipt = {'status': 'recorded', 'schema_version': '1.0', 'request_id': data.request_id,
                 'receipt_id': rid, 'revision': revision + 1, 'entity_ids': entity_ids, 'source_ids': source_ids,
                 'fact_ids': fact_ids, 'objects_created': created, 'facts_created': len(set(fact_ids) - original_ids),
                 'sources_recorded': len(source_ids), 'conflict_count': sum('conflict' in reasons[f] for f in fact_ids),
                 'uncertain_count': sum(any(r in reasons[f] for r in ('uncertain', 'uncertain_identity')) for f in fact_ids),
-                'idempotent': False}
+                'idempotent': False,'current_state':'current'}
             # Bound the resulting workspace as well as the pre-write snapshot.
             limit = self.repo.settings.max_records
             require(len(objects) <= limit and len(facts) <= limit, 'LIMIT_EXCEEDED',
@@ -126,6 +135,16 @@ class Ingestion:
                 d=scope.dataset, revision=revision+1).consume()
             return receipt
         return self.repo.scoped(scope, save, 'record')
+
+    @staticmethod
+    def _receipt_state(tx,scope,receipt):
+        ids=list(receipt.get('entity_ids',{}).values())
+        rows=[dict(r['o']) for r in tx.run('MATCH (o:KDObject {dataset:$d}) WHERE o.id IN $ids RETURN properties(o) AS o',d=scope.dataset,ids=ids)]
+        if len(rows)!=len(set(ids)) or any(o.get('deleted_by') for o in rows):return 'deleted'
+        bad=tx.run('MATCH (f:KDFact {dataset:$d}) WHERE f.id IN $ids AND '
+            '(coalesce(f.active,true)=false OR f.deleted_by IS NOT NULL) RETURN count(f) AS n',
+            d=scope.dataset,ids=receipt.get('fact_ids',[])).single()['n']
+        return 'changed' if bad or any(o.get('version',1)>1 for o in rows) else 'current'
 
     @staticmethod
     def _compatible(objects, facts, candidate):

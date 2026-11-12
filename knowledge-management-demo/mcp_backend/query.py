@@ -50,7 +50,7 @@ class Queries:
             reasons = eligibility(objects, facts)
             index = defaultdict(list)
             for fact in facts:
-                if any(r in reasons[fact['id']] for r in ('historical', 'unavailable_entity', 'unexecuted_proposal')):
+                if any(r in reasons[fact['id']] for r in ('historical', 'deleted', 'unavailable_entity', 'unexecuted_proposal')):
                     continue
                 index[(fact['subject_id'], fact['predicate'], 'out')].append(fact)
                 if fact.get('object_id'):

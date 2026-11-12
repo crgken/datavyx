@@ -55,6 +55,7 @@ atlasai-core/app/demo.db
 **/*.pyc
 **/.venv-mcp/
 **/.mcp-artifacts/
+**/mcp-config.env
 outputs/client-acquisition/collector/
 outputs/client-acquisition/company-lookups/
 atlasai-core/eval/results_*.json

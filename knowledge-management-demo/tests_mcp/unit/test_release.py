@@ -27,11 +27,12 @@ class ReleaseTests(unittest.TestCase):
             self.assertTrue(path.is_relative_to(parent))  # Verified before automatic recursive cleanup.
             yield path
 
-    def archive(self, folder, extra=None, bad_hash=False, duplicate=False, link=False,data_contract=2):
+    def archive(self, folder, extra=None, bad_hash=False, duplicate=False, link=False,data_contract=2,permanent_erasure=False):
         files = {name: b'pass\n' for name in release.REQUIRED}
         if extra: files[extra] = b'forbidden'
         manifest = {'format': 1, 'data_contract':data_contract,'commit': 'a'*40, 'runtime': 'python3.12',
             'files': {n: {'sha256': release.sha(v), 'size': len(v)} for n, v in files.items()}}
+        if permanent_erasure is not None:manifest['permanent_erasure']=permanent_erasure
         if bad_hash: manifest['files'][next(iter(files))]['sha256'] = '0'*64
         path = folder/'release.tar'
         with tarfile.open(path, 'w') as archive:
@@ -91,6 +92,12 @@ class ReleaseTests(unittest.TestCase):
         with self.directory() as folder:
             path,checksum=self.archive(folder,data_contract=1)
             with self.assertRaises(ValueError):release.verify(path,checksum,'a'*40)
+
+    def test_rollback_cannot_reopen_permanent_erasure_or_assume_an_old_manifest_disables_it(self):
+        for flag in (None,True,'false',0):
+            with self.subTest(flag=flag),self.directory() as folder:
+                path,checksum=self.archive(folder,permanent_erasure=flag)
+                with self.assertRaises(ValueError):release.verify(path,checksum,'a'*40)
 
     def test_recovery_loader_passes_literal_arguments_without_model_environment(self):
         with self.directory() as folder:

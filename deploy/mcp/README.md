@@ -4,6 +4,8 @@
 
 正式准备顺序：先形成并核验最终一致备份、停止旧写入，在正式写入关闭的配置下完成显式schema/兼容迁移，再调用switch-production.sh prepare启动就绪服务，随后activate路由、真实OAuth/最小业务闭环、最后open。不能在schema尚未迁移时先要求prepare通过ready。
 
+首发包新增permanent_erasure=false硬门槛，安装健康回退/候选恢复不能退回未声明这一限制的旧12工具包。首次从旧候选升级时，只用旧可信校验器核验/解包新包，再运行新包自己的安装器；不让旧安装器决定健康失败后的回退版本。
+
 M00–M09扩展：当前实现有12工具，新scope为update/delete/restore/history/purge/bulk；实际候选状态看扩展进度。普通业务直接执行无审批；开发与正式切换授权边界保留。MCP_RECORDING_ENABLED屏障覆盖所有新写工具。
 
 永久清除清单必须持久保存在数据库卷/不可变发布目录之外：候选`/var/lib/atlasai-mcp/candidate-purge-ledger`，正式`/var/lib/atlasai-mcp/purge-ledger`。服务账号ubuntu、目录0700/文件0600，systemd只开放对应ReadWritePaths；MCP_PURGE_LEDGER_DIR必须显式匹配。升级/回滚不得覆盖或清空该目录。首次升级旧候选安装器前先创建目录并更新受保护配置；后续新安装器会准备目录。

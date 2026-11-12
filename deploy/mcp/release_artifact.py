@@ -51,7 +51,7 @@ def build(root, remote_ref, output):
     names = git(root, 'ls-tree', '-r', '--name-only', commit).decode('utf-8').splitlines()
     files = {name: git(root, 'show', f'{commit}:{name}') for name in sorted(names) if allowed(name)}
     if not REQUIRED <= files.keys(): raise ValueError('The commit is missing required MCP files.')
-    manifest = {'format': 1, 'data_contract':2, 'commit': commit, 'runtime': 'python3.12',
+    manifest = {'format': 1, 'data_contract':2, 'permanent_erasure':False, 'commit': commit, 'runtime': 'python3.12',
         'files': {name: {'sha256': sha(value), 'size': len(value)} for name, value in files.items()}}
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -77,6 +77,8 @@ def verify(archive_path, expected_sha, expected_commit):
         manifest = json.load(archive.extractfile('MCP-MANIFEST.json'))
         if manifest.get('format') != 1 or manifest.get('data_contract') != 2 or manifest.get('commit') != expected_commit or manifest.get('runtime') != 'python3.12':
             raise ValueError('Manifest version or commit mismatch.')
+        if manifest.get('permanent_erasure') is not False:
+            raise ValueError('This release must not reopen permanent erasure, including during recovery.')
         files = manifest.get('files', {})
         if not REQUIRED <= files.keys() or set(names) != set(files) | {'MCP-MANIFEST.json'}:
             raise ValueError('Manifest file set mismatch.')

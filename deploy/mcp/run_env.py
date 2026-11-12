@@ -10,7 +10,8 @@ import subprocess
 def read_env(path):
     result = {}
     for line in Path(path).read_text(encoding='utf-8-sig').splitlines():
-        parts = shlex.split(line, comments=True, posix=True)
+        if line.lstrip().startswith('#'): continue
+        parts = shlex.split(line, comments=False, posix=True)
         if not parts: continue
         if len(parts) != 1 or '=' not in parts[0]: raise ValueError('Invalid environment line.')
         key, value = parts[0].split('=', 1)

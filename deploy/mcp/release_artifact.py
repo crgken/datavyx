@@ -99,9 +99,14 @@ def extract(archive_path, expected_sha, expected_commit, target):
     return {'status': 'verified_extracted', 'commit': expected_commit, 'files': len(values)}
 
 
-def verify_installed(target, expected_commit):
+def verify_installed(target, expected_commit, archive_path=None, expected_sha=None):
     target = Path(target).resolve()
     manifest = json.loads((target/'MCP-MANIFEST.json').read_text(encoding='utf-8'))
+    if archive_path is None:
+        anchor = json.loads((target/'.mcp-artifact.json').read_text(encoding='utf-8'))
+        archive_path, expected_sha = anchor['path'], anchor['sha256']
+    trusted, _ = verify(archive_path, expected_sha, expected_commit)
+    if manifest != trusted: raise ValueError('Installed manifest differs from the trusted artifact.')
     if manifest.get('commit') != expected_commit or not REQUIRED <= manifest.get('files', {}).keys():
         raise ValueError('Installed release identity mismatch.')
     for name, entry in manifest['files'].items():
@@ -121,10 +126,11 @@ def main():
         command = subs.add_parser(name); command.add_argument('archive'); command.add_argument('--sha256', required=True); command.add_argument('--commit', required=True)
         if name == 'extract': command.add_argument('--target', required=True)
     installed = subs.add_parser('installed'); installed.add_argument('--target', required=True); installed.add_argument('--commit', required=True)
+    installed.add_argument('--archive'); installed.add_argument('--sha256')
     args = parser.parse_args()
     try:
         if args.operation == 'build': result = build(args.root, args.remote_ref, args.output)
-        elif args.operation == 'installed': result = verify_installed(args.target, args.commit)
+        elif args.operation == 'installed': result = verify_installed(args.target, args.commit, args.archive, args.sha256)
         elif args.operation == 'extract': result = extract(args.archive, args.sha256, args.commit, args.target)
         else:
             manifest, _ = verify(args.archive, args.sha256, args.commit)

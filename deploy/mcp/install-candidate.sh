@@ -16,11 +16,18 @@ release="/opt/atlasai-mcp/candidates/$3"
 python3 "$helper" verify "$archive" --sha256 "$2" --commit "$3"
 # Reuse the exact verified source and completed dependency environment.
 if [[ -e "$release" ]]; then
-  python3 "$helper" installed --target "$release" --commit "$3"
+  python3 "$helper" installed --target "$release" --commit "$3" --archive "$archive" --sha256 "$2"
 else
   mkdir -p /opt/atlasai-mcp/candidates
   python3 "$helper" extract "$archive" --sha256 "$2" --commit "$3" --target "$release"
 fi
+python3 - "$release" "$archive" "$2" <<'PY'
+import json,sys
+from pathlib import Path
+target=Path(sys.argv[1])/'.mcp-artifact.json'
+target.write_text(json.dumps({'path':sys.argv[2],'sha256':sys.argv[3]}))
+target.chmod(0o600)
+PY
 backend="$release/knowledge-management-demo"
 if [[ ! -x "$backend/.venv-mcp/bin/python" ]]; then python3.12 -m venv "$backend/.venv-mcp"; fi
 lock_hash=$(sha256sum "$backend/requirements-mcp.lock.txt" | cut -d' ' -f1)

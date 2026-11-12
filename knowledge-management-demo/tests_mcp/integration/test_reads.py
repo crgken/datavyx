@@ -130,5 +130,12 @@ class ReadTests(unittest.TestCase):
             self.records.find_records(self.scope, FindInput(limit=1, cursor=cursor))
         self.assertEqual(error.exception.code, 'PERMISSION_DENIED')
 
+    def test_viewer_context_does_not_advertise_recording_permission(self):
+        self.repo.transaction(lambda tx: tx.run('MATCH (m:KDWorkspaceMember {workspace_id:$d}) SET m.role="viewer"',
+            d=self.scope.dataset).consume())
+        result = self.catalog.get_context(self.scope, ContextInput())
+        self.assertEqual(result['permissions'], ['read'])
+        self.assertFalse(result['profile']['recording_available'])
+
 
 if __name__ == '__main__': unittest.main()

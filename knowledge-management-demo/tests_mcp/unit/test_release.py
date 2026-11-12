@@ -47,12 +47,17 @@ class ReleaseTests(unittest.TestCase):
         with self.directory() as folder:
             path, checksum = self.archive(folder)
             release.extract(path, checksum, 'a'*40, folder/'release')
-            self.assertEqual(release.verify_installed(folder/'release', 'a'*40)['status'], 'installed_verified')
+            self.assertEqual(release.verify_installed(folder/'release', 'a'*40, path, checksum)['status'], 'installed_verified')
             with self.assertRaises(ValueError): release.extract(path, checksum, 'a'*40, folder/'release')
             with self.assertRaises(ValueError): release.verify(path, checksum, 'b'*40)
             with self.assertRaises(ValueError): release.verify(path, '0'*64, 'a'*40)
             (folder/'release'/next(iter(release.REQUIRED))).write_text('changed', encoding='utf-8')
-            with self.assertRaises(ValueError): release.verify_installed(folder/'release', 'a'*40)
+            with self.assertRaises(ValueError): release.verify_installed(folder/'release', 'a'*40, path, checksum)
+            manifest_path = folder/'release/MCP-MANIFEST.json'
+            forged = json.loads(manifest_path.read_text())
+            forged['files'][next(iter(release.REQUIRED))] = {'size': 7, 'sha256': release.sha(b'changed')}
+            manifest_path.write_text(json.dumps(forged))
+            with self.assertRaises(ValueError): release.verify_installed(folder/'release', 'a'*40, path, checksum)
 
     def test_path_traversal_private_files_and_unlisted_runtime_are_rejected(self):
         for name in ['../outside.py', '/absolute.py', 'knowledge-management-demo/mcp_backend//server.py',
@@ -71,10 +76,10 @@ class ReleaseTests(unittest.TestCase):
     def test_env_file_is_data_without_expansion_or_legacy_keys(self):
         with self.directory() as folder:
             path = folder/'mcp-config.env'
-            path.write_text('MCP_CURSOR_SECRET="literal-$HOME-$(no-command)-`no-command`"\nMCP_NEO4J_PASSWORD=\n', encoding='utf-8')
+            path.write_text('MCP_CURSOR_SECRET="literal-$HOME-$(no-command)-`no-command`"\nMCP_NEO4J_PASSWORD=literal#hash\n', encoding='utf-8')
             values = run_env.read_env(path)
             self.assertEqual(values['MCP_CURSOR_SECRET'], 'literal-$HOME-$(no-command)-`no-command`')
-            self.assertEqual(values['MCP_NEO4J_PASSWORD'], '')
+            self.assertEqual(values['MCP_NEO4J_PASSWORD'], 'literal#hash')
             path.write_text('LLM_API_KEY=forbidden', encoding='utf-8')
             with self.assertRaises(ValueError): run_env.read_env(path)
             path.write_text('MCP_MODE=test\nMCP_MODE=production', encoding='utf-8')

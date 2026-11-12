@@ -47,6 +47,7 @@ class Catalog:
 
     def get_context(self, scope, data):
         def read(tx, revision):
+            permissions = self.repo.authorize(tx, scope)
             objects, facts = self.repo.snapshot(tx, scope)
             catalog = vocabulary(objects, facts)
             # Vocabulary version is independent of repeated source-only additions.
@@ -59,12 +60,12 @@ class Catalog:
                     and (not data.predicate or row.get('predicate') == data.predicate)]
             return {**self.pager.page(rows, scope, revision, data, 'context', data.cursor),
                     'workspace_id': scope.workspace_id, 'catalog_revision': version, 'directory': data.directory,
-                    'permissions': sorted(self.repo.authorize(tx, scope)), 'profile': {
+                    'permissions': sorted(permissions), 'profile': {
                         'actor_id': scope.actor, 'identity_normalization': 'NFC-strip-casefold-v1',
                         'name_is_unique': False, 'new_vocabulary': 'allowed_with_source',
                         'numeric_scale': 6, 'max_number_absolute': '1000000000',
-                        'recording_available': self.repo.settings.mode == 'test' or self.repo.settings.recording_enabled
-                                               or scope.actor in self.repo.settings.recording_actors,
+                        'recording_available': 'record' in permissions and (self.repo.settings.mode == 'test'
+                            or self.repo.settings.recording_enabled or scope.actor in self.repo.settings.recording_actors),
                         'unit_rule': 'explicit_source_quote', 'scope': 'authorized_workspace',
                         'supported_operations': ['record', 'query']}}
         return self.repo.scoped(scope, read)

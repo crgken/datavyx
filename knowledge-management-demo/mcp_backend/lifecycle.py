@@ -19,7 +19,7 @@ def current_source(tx,dataset,source):
         'RETURN labels(n) AS labels,properties(n) AS n',d=dataset,id=source['id'])
     for row in rows:
         n=row['n']
-        if 'KDObject' in row['labels'] and not available(n):return False
+        if 'KDObject' in row['labels'] and (not available(n) or n.get('source_visibility_barrier')):return False
         if 'KDFact' in row['labels']:
             if not present(n) or not n.get('active',True):return False
             for oid in (n.get('subject_id'),n.get('object_id')):

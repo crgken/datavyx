@@ -77,6 +77,7 @@ class Repository:
         def run(tx):
             self.authorize(tx,scope,permission)
             revision=self.revision(tx,scope.dataset,write=True)
+            self.authorize(tx,scope,permission)
             return fn(tx,revision)
         return self.transaction(run)
 

@@ -25,7 +25,7 @@ python deploy/mcp/release_artifact.py build --root . --remote-ref origin/codex/m
 ## 隔离安装和认证
 
 1. 先从已有一致性备份恢复到单独 Neo4j 测试容器，仅绑定 127.0.0.1:17694。不复制运行中的卷，不停生产 17693/17695。记录备份时点/版本及差异，时效不足明确报告。
-2. 新 Auth0 API Identifier 为 https://kb.datavyx.com/mcp-candidate，RS256，scope 为 knowledge:read / knowledge:record。独立 ChatGPT OAuth 客户端采用授权码 + S256 PKCE；回调从 ChatGPT 管理页面精确复制。Client ID 可作为公开配置，client secret 仅存身份提供方和 ChatGPT 受保护配置，不放服务端包。
+2. 新 Auth0 API Identifier 为 https://kb.datavyx.com/mcp-candidate，RS256，scope 为 knowledge:read / record / update / delete / restore / history / purge / bulk（每项均有knowledge:前缀）。独立 ChatGPT OAuth 客户端采用授权码 + S256 PKCE；回调从 ChatGPT 管理页面精确复制。Client ID 可作为公开配置，client secret 仅存身份提供方和 ChatGPT 受保护配置，不放服务端包。删除、恢复和清除工具的OAuth声明包含条件批量scope，避免客户端只按静态声明补授权时漏掉bulk；实际能否批量仍由token与当前空间角色、范围共同判定，普通读取不要求写权限。
 3. 服务器 /etc/atlasai/mcp-candidate.env 使用例子，root:root/0600，MCP_MODE=test、数据库 17694、服务 8098、resource/audience 相同，公开客户端 allowlist 明确。run_env.py 不执行 shell、不继承模型变量、不打印配置内容；拒绝候选误指生产。
 4. 执行 `sudo bash install-candidate.sh ARCHIVE SHA256 COMMIT`，仅创建不可变 candidate 目录和独立 venv，显式迁移测试库，安装候选 systemd 服务并检查新 ready。不会安装网关、停旧服务或执行生产迁移；失败只恢复旧候选指针。
 5. nginx-candidate.conf 只增加候选及其发现文档两个 location，在现有 HTTPS server 内审阅加入、nginx -t 后 reload。保留旧网页/API；匿名知识调用必须 401，元数据可公开。

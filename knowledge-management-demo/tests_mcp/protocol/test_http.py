@@ -109,6 +109,11 @@ class HTTPProtocolTests(unittest.TestCase):
                     self.assertEqual(tool.annotations.read_only_hint, tool.name not in WRITES)
                     self.assertEqual(tool.annotations.destructive_hint,tool.name in DESTRUCTIVE)
                     self.assertEqual(tool.meta['securitySchemes'][0]['type'], 'oauth2')
+                declared={tool.name:set(tool.meta['securitySchemes'][0]['scopes']) for tool in listed.tools}
+                self.assertEqual(set().union(*declared.values()),{'knowledge:'+p for p in PERMISSIONS})
+                for name in ('delete_information','restore_information','purge_information'):
+                    self.assertIn('knowledge:bulk',declared[name])
+                self.assertEqual(declared['get_context'],{'knowledge:read'})
                 context = await client.call_tool('get_context', {'workspace_id': self.scope.workspace_id})
                 self.assertFalse(context.is_error)
                 data = sample(); data['workspace_id'] = self.scope.workspace_id
@@ -202,6 +207,33 @@ class HTTPProtocolTests(unittest.TestCase):
                 result=await client.call_tool('update_information',{'workspace_id':self.scope.workspace_id,**body})
                 self.assertTrue(result.is_error);self.assertEqual(result.structured_content['error']['code'],'PERMISSION_DENIED')
                 self.assertFalse(result.meta and result.meta.get('mcp/www_authenticate'))
+        asyncio.run(run())
+
+    def test_bulk_scope_challenge_and_exact_empty_retry_over_http(self):
+        async def run():
+            selection={'resource':'workspace'}
+            async with Client(AuthenticatedTransport(self.settings.resource_url,self.token()),cache=None) as client:
+                found=await client.call_tool('find_records',{'workspace_id':self.scope.workspace_id,'selection':selection})
+                matched=found.structured_content
+            self.assertEqual(matched['selection_count'],0)
+            body={'workspace_id':self.scope.workspace_id,**instruction('http-empty-bulk-001',text='Delete the empty acceptance workspace.'),
+                'selection':selection,'expected_revision':matched['revision'],'expected_count':0,'selection_digest':matched['selection_digest']}
+            token=self.token(scope='knowledge:read knowledge:delete')
+            async with Client(AuthenticatedTransport(self.settings.resource_url,token),cache=None) as client:
+                denied=await client.call_tool('delete_information',body)
+                self.assertTrue(denied.is_error)
+                self.assertIn('knowledge:bulk',denied.meta['mcp/www_authenticate'][0])
+                self.assertEqual(denied.structured_content['error']['code'],'PERMISSION_DENIED')
+            token=self.token(scope='knowledge:read knowledge:delete knowledge:bulk')
+            async with Client(AuthenticatedTransport(self.settings.resource_url,token),cache=None) as client:
+                result=await client.call_tool('delete_information',body)
+                self.assertFalse(result.is_error,str(result.structured_content))
+                receipt=result.structured_content
+                self.assertEqual((receipt['status'],receipt['applied_count'],receipt['sources_recorded']),('noop',0,0))
+                self.assertEqual(receipt['revision'],matched['revision'])
+                replay=await client.call_tool('delete_information',body)
+                self.assertFalse(replay.is_error)
+                self.assertTrue(replay.structured_content['idempotent'])
         asyncio.run(run())
 
     def test_request_limit_and_origin_host_guards(self):

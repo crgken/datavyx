@@ -128,6 +128,9 @@ def create_server(repository, authentication):
             inputSchema=model.model_json_schema(), outputSchema=TOOL_OUTPUTS[name].model_json_schema(),
             _meta={'securitySchemes': [{'type': 'oauth2', 'scopes': ['knowledge:read']+
                 (['knowledge:'+TOOL_PERMISSIONS[name]] if name in TOOL_PERMISSIONS else [])+
+                # Clients may request only declared scopes when replaying a challenge.
+                # Include conditional batch access; runtime role/range checks still apply.
+                (['knowledge:bulk'] if name in {'delete_information','restore_information','purge_information'} else [])+
                 (['knowledge:history'] if name=='purge_information' else [])}]},
             annotations=types.ToolAnnotations(readOnlyHint=name not in WRITES,
                 destructiveHint=name in DESTRUCTIVE, idempotentHint=True, openWorldHint=False)) for name, model in TOOL_INPUTS.items()])

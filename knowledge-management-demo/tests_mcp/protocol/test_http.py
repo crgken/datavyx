@@ -99,6 +99,35 @@ class HTTPProtocolTests(unittest.TestCase):
         self.assertEqual(metadata['authorization_servers'], [self.settings.issuer])
         self.assertEqual(set(metadata['scopes_supported']), {'knowledge:'+p for p in PUBLIC_PERMISSIONS})
 
+    def test_self_service_new_clients_provision_and_isolate_over_http(self):
+        tokens=[self.token(sub='auth0|mcp-test-'+uuid4().hex,azp='new-client-'+uuid4().hex)
+                for _ in range(2)]
+        with patch.object(self.auth,'settings',replace(self.settings,client_policy='authenticated',clients=())):
+            identities=[self.auth.authenticate('Bearer '+token) for token in tokens]
+            async def run():
+                async with Client(AuthenticatedTransport(self.settings.resource_url,tokens[0]),cache=None) as a:
+                    context=await a.call_tool('get_context',{})
+                    self.assertFalse(context.is_error)
+                    own=context.structured_content['workspace_id']
+                    self.assertEqual(own,'personal:'+identities[0].actor)
+                    saved=await a.call_tool('record_information',sample())
+                    self.assertFalse(saved.is_error)
+                    async with Client(AuthenticatedTransport(self.settings.resource_url,tokens[1]),cache=None) as b:
+                        context=await b.call_tool('get_context',{})
+                        self.assertEqual(context.structured_content['workspace_id'],'personal:'+identities[1].actor)
+                        found=await b.call_tool('find_records',{})
+                        self.assertEqual(found.structured_content['rows'],[])
+                        denied=await b.call_tool('get_context',{'workspace_id':own})
+                        self.assertTrue(denied.is_error)
+                        self.assertEqual(denied.structured_content['error']['code'],'PERMISSION_DENIED')
+            try:asyncio.run(run())
+            finally:
+                assert self.repo.settings.mode=='test' and self.repo.settings.uri=='bolt://127.0.0.1:17694'
+                for identity in identities:
+                    assert identity.subject.startswith('auth0|mcp-test-')
+                    self.repo.transaction(lambda tx:tx.run('MATCH (n) WHERE n.dataset=$d OR (n:KDData AND n.id=$d) '
+                        'DETACH DELETE n',d='personal:'+identity.actor).consume())
+
     def test_real_protocol_tools_and_complete_save_query_source_receipt(self):
         async def run():
             async with Client(AuthenticatedTransport(self.settings.resource_url, self.token()), cache=None) as client:

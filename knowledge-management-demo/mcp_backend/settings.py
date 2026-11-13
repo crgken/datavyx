@@ -17,6 +17,7 @@ class Settings:
     clients: tuple[str, ...]
     resource_url: str
     cursor_secret: str = field(repr=False)
+    client_policy: str = 'allowlist'
     host: str = '127.0.0.1'
     port: int = 8098
     mode: str = 'production'
@@ -48,8 +49,13 @@ class Settings:
                 and not resource.fragment and (resource.scheme=='https' or self.mode=='test'
                     and resource.scheme=='http' and resource.hostname in {'127.0.0.1','localhost'}),
                 'INVALID_CONFIGURATION','A canonical MCP resource URL is required.')
-        require(bool(self.audience) and bool(self.clients) and all(self.clients) and len(self.cursor_secret)>=32,
-                'INVALID_CONFIGURATION','Audience, client allowlist and a cursor signing secret are required.')
+        require(self.client_policy in {'allowlist','authenticated'},
+                'INVALID_CONFIGURATION','Invalid OAuth client policy.')
+        require(bool(self.audience) and len(self.cursor_secret)>=32,
+                'INVALID_CONFIGURATION','Audience and a cursor signing secret are required.')
+        require(all(isinstance(c,str) and c.strip()==c and 0<len(c)<=200 and c!='*' for c in self.clients)
+                and (self.client_policy=='authenticated' or bool(self.clients)),
+                'INVALID_CONFIGURATION','Allowlist policy requires explicit OAuth client IDs; wildcards are not supported.')
         require(self.mode=='test' or self.audience==self.resource_url,
                 'INVALID_CONFIGURATION','Production audience must identify this canonical MCP resource.')
         require(type(self.recording_enabled) is bool, 'INVALID_CONFIGURATION', 'Recording mode must be boolean.')
@@ -66,7 +72,9 @@ class Settings:
             return cls(uri=os.environ['MCP_NEO4J_URI'],database=os.getenv('MCP_NEO4J_DATABASE','neo4j'),
                 user=os.getenv('MCP_NEO4J_USER','neo4j'),password=os.environ['MCP_NEO4J_PASSWORD'],
                 issuer=os.environ['MCP_AUTH_ISSUER'],audience=os.environ['MCP_AUTH_AUDIENCE'],
-                clients=tuple(s.strip() for s in os.environ['MCP_AUTH_CLIENT_IDS'].split(',')),
+                clients=tuple(s.strip() for s in os.getenv('MCP_AUTH_CLIENT_IDS','').split(','))
+                    if os.getenv('MCP_AUTH_CLIENT_IDS','').strip() else (),
+                client_policy=os.getenv('MCP_AUTH_CLIENT_POLICY','allowlist'),
                 resource_url=os.environ['MCP_RESOURCE_URL'],cursor_secret=os.environ['MCP_CURSOR_SECRET'],
                 host=os.getenv('MCP_HOST','127.0.0.1'),port=int(os.getenv('MCP_PORT','8098')),
                 mode=os.getenv('MCP_MODE','production'),max_records=int(os.getenv('MCP_MAX_RECORDS','10000')),

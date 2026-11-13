@@ -70,6 +70,59 @@ permission grant or persistent server-side session switch.
 Offline signature and database membership tests do not prove the actual Auth0
 callback or real ChatGPT connection. Those remain separate U11/U16 acceptance.
 
+## Self-service OAuth clients and personal spaces
+
+`MCP_AUTH_CLIENT_POLICY=allowlist` is the backward-compatible default and requires
+explicit comma-separated `MCP_AUTH_CLIENT_IDS`. To admit all clients authorized by
+the configured issuer for this API, explicitly set:
+
+```text
+MCP_AUTH_CLIENT_POLICY=authenticated
+```
+
+In this mode `MCP_AUTH_CLIENT_IDS` may be empty; any IDs left in that setting do
+not restrict admission. `*` is rejected in either mode. Unknown policy values fail
+configuration validation. This policy accepts both pre-registered and dynamically
+registered OAuth clients; it does not identify a client as Claude or certify its
+software. It trusts only the configured issuer's signed API access token.
+Signature, issuer, audience/resource, expiry, user subject, organization (when
+configured), delegated scopes, revocation and current workspace-role checks
+remain mandatory. Machine subjects and client-credentials grants are rejected.
+No Auth0 Management API credentials or shared client secret are needed by this
+backend or distributed to users.
+
+Auth0 must separately enable DCR, make the intended login connection available
+to third-party apps, and grant only the selected user-delegated API scopes to
+new third-party clients. Client-credentials/M2M access is not needed. Preserve the
+existing issuer, resource audience and Resource Parameter Compatibility Profile;
+do not change the tenant default audience as a workaround. For older tenants,
+check strict DCR mode and default third-party client grants before registering
+new clients. These are tenant-wide identity configuration changes, not performed
+by changing this backend environment variable. See the
+[Auth0 DCR setup](https://auth0.com/blog/secure-csharp-mcp-server-with-auth0/),
+[API access policies](https://auth0.com/blog/developers-guide-api-access-policies-auth0/)
+and [strict-mode guidance](https://support.auth0.com/center/s/article/enable-strict-dcr-mode-for-tenant).
+
+Users add the MCP URL in their client's connector settings and complete their own
+OAuth login/consent. The client handles registration and credentials; users need
+no shared secret. Claude supports DCR and Streamable HTTP; see
+[Claude's connector guide](https://support.anthropic.com/en/articles/11503834-building-custom-connectors-via-remote-mcp-servers).
+
+On the first authorized tool call without `workspace_id`, a user with no existing
+workspace membership receives a personal workspace and owner membership in one
+transaction. Its ID derives from the trusted `(issuer, sub)`, not email, client ID
+or a caller-provided identity. Repeated/concurrent first calls reuse the space;
+the same Auth0 identity on different clients uses the same space. New users do
+not join existing shared spaces. Explicit workspace IDs still require membership;
+disabled membership cannot be reenabled by reconnecting. Existing memberships
+are preserved. No schema migration or frontend build is needed for this change.
+
+Enable this policy in an isolated candidate first and verify two real OAuth users,
+refresh/reconnect and cross-space rejection before a separately authorized
+production rollout. Local signed-token tests cannot prove Auth0 DCR or client UI
+compatibility. To revert client admission, restore `allowlist` with the approved
+IDs and restart; preserve all newly created spaces and records.
+
 ## Resource and diagnostic boundaries
 
 Input JSON is limited to 256 KiB, individual structured results to 512 KiB,

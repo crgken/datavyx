@@ -53,6 +53,28 @@ class SettingsTests(unittest.TestCase):
     def test_production_cannot_omit_the_external_erasure_boundary(self):
         with self.assertRaises(KnowledgeError):settings(mode='production',password='test-only',resource_url='https://mcp.example/mcp')
 
+    def test_self_service_is_explicit_and_rejects_wildcards_or_unknown_policies(self):
+        self.assertEqual(settings().client_policy,'allowlist')
+        self.assertEqual(settings(client_policy='authenticated',clients=()).clients,())
+        for changes in ({'client_policy':'all'}, {'client_policy':'Authenticated'},
+                        {'clients':('*',)}, {'clients':('',)}, {'clients':(' spaced ',)},
+                        {'client_policy':'authenticated','clients':('*',)}):
+            with self.subTest(changes=changes),self.assertRaises(KnowledgeError):settings(**changes)
+
+    def test_self_service_env_can_omit_client_ids_but_legacy_default_cannot(self):
+        env={'MCP_NEO4J_URI':'bolt://127.0.0.1:17694','MCP_NEO4J_PASSWORD':'',
+             'MCP_AUTH_ISSUER':'https://issuer.example/','MCP_AUTH_AUDIENCE':'test-audience',
+             'MCP_RESOURCE_URL':'http://127.0.0.1:8098/mcp','MCP_CURSOR_SECRET':'test-secret-'*5,
+             'MCP_MODE':'test'}
+        with patch.dict(os.environ,env,clear=True):
+            with self.assertRaises(KnowledgeError):Settings.from_env()
+            os.environ['MCP_AUTH_CLIENT_POLICY']='authenticated'
+            self.assertEqual(Settings.from_env().clients,())
+            os.environ['MCP_AUTH_CLIENT_IDS']='existing-a, existing-b'
+            self.assertEqual(Settings.from_env().clients,('existing-a','existing-b'))
+            os.environ['MCP_AUTH_CLIENT_POLICY']='typo'
+            with self.assertRaises(KnowledgeError):Settings.from_env()
+
     def test_cursor_rotation_does_not_invalidate_dedicated_erasure_signatures(self):
         from mcp_backend.purge_ledger import PurgeLedger
         original=settings(purge_ledger_secret='stable-erasure-key-'*3)

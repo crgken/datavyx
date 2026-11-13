@@ -44,8 +44,13 @@ class Authentication:
             raise KnowledgeError('UNAUTHENTICATED','Token verification failed.',401) from None
         client=claims.get('azp',claims.get('client_id',''))
         subject=claims['sub']
-        require(client in self.settings.clients and isinstance(subject,str) and 0<len(subject)<=200
-                and not subject.endswith('@clients') and type(claims['exp']) is int and type(claims['iat']) is int
+        # In self-service mode Auth0's signed API token and delegated scopes are
+        # the admission boundary. Client-supplied names/redirects are not trusted.
+        require(isinstance(client,str) and 0<len(client)<=200 and bool(client.strip())
+                and (self.settings.client_policy=='authenticated' or client in self.settings.clients)
+                and isinstance(subject,str) and 0<len(subject)<=200 and bool(subject.strip())
+                and not subject.endswith('@clients') and claims.get('gty')!='client-credentials'
+                and type(claims['exp']) is int and type(claims['iat']) is int
                 and ('azp' not in claims or 'client_id' not in claims or claims['azp']==claims['client_id'])
                 and (not self.settings.organization or claims.get('org_id')==self.settings.organization),
                 'UNAUTHENTICATED','Token identity or client is not permitted.',401)

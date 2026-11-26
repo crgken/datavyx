@@ -10,7 +10,8 @@
             "type": "oauth",
             "client": {
               "mode": "provided",
-              "clientId": "7CoGooGTzCivdedhDG2P2sjhGbcQJZo1"
+              "clientId": "7CoGooGTzCivdedhDG2P2sjhGbcQJZo1",
+              "tokenEndpointAuthMethod": "client_secret_post"
             },
             "baseScopes": ["knowledge:read"],
             "defaultScopes": [

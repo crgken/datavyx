@@ -22,7 +22,7 @@
 
 ## 配置需要实测的边界
 
-1. 当前包没有声明tokenEndpointAuthMethod，因为尚未只读核验这一个Auth0应用的实际方法；该字段允许省略。正式连接前从应用Credentials核对并按实际情况补齐，不能把issuer公布的全局方法当作单应用配置。
+1. 发布者2026-11-26提供应用Credentials截图，Client Authentication Methods明确选中Client Secret (Post)；当前包已写client.tokenEndpointAuthMethod=client_secret_post。截图Secret保持遮挡，未读取、复制或写入包。应用实际方法与provider全局方法是不同证据，本次以该应用截图核验。
 2. 复用的应用必须对正式/mcp API具备七项User-Delegated授权。实际callback从本次Portal管理页精确复制；仅在确有新地址时追加，不覆盖已有callback，也不配置通配符。
 3. offline_access已被issuer发现文档声明；API Allow Offline Access、该应用Refresh Token grant与实际刷新寿命尚未核验。包声明不等于刷新已生效，不承诺用户永不重连。
 4. fixed-client开发验收、演示及最终Portal连接/扫描是不同阶段。先恢复一个使用既有客户端的开发连接，不需要新增DCR应用；每位外部用户不应再各自创建DCR连接。

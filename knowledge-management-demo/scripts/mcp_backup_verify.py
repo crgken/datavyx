@@ -41,7 +41,9 @@ def verify_backup(store,name,settings):
         subprocess.run(['docker','create','--name',container,'--pull=never','--label','datavyx.backup-verification='+nonce,
             '--memory=1g','--cpus=1','--publish','127.0.0.1:17696:7687','--tmpfs','/data:rw,size=512m',
             '--tmpfs','/logs:rw,size=32m','--env','NEO4J_AUTH=none','--env','NEO4J_server_memory_heap_initial__size=256m',
-            '--env','NEO4J_server_memory_heap_max__size=256m','--env','NEO4J_server_memory_pagecache_size=64m',image],
+            '--env','NEO4J_server_memory_heap_max__size=256m','--env','NEO4J_server_memory_pagecache_size=64m',
+            '--env','NEO4J_db_tx__log_preallocate=false','--env','NEO4J_db_tx__log_rotation_size=8m',
+            '--env','NEO4J_dbms_usage__report_enabled=false',image],
             check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         created=True;owned()
         subprocess.run(['docker','start',container],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
@@ -49,6 +51,7 @@ def verify_backup(store,name,settings):
         repo=Repository(isolated)
         wait_for_database(repo)
         owned();restore_isolated(repo,snapshot)
+        if snapshot['body']['profile']!='legacy-semantic':repo.migrate()
         return store.verify_restored(name,repo)
     finally:
         if repo:repo.close()

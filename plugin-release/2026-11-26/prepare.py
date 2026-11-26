@@ -74,7 +74,8 @@ def main():
     assert not (PACKAGE/'.app.json').exists()
     connection=mcp['mcpServers']['datavyx'];auth=connection['extensions']['com.openai']['auth']
     assert connection['type']=='streamable-http' and connection['url']=='https://kb.datavyx.com/mcp'
-    assert auth['client']=={'mode':'provided','clientId':'7CoGooGTzCivdedhDG2P2sjhGbcQJZo1'}
+    assert auth['client']=={'mode':'provided','clientId':'7CoGooGTzCivdedhDG2P2sjhGbcQJZo1',
+        'tokenEndpointAuthMethod':'client_secret_post'}
     expected={'read','record','update','delete','restore','history','bulk'}
     assert set(auth['defaultScopes'])=={'knowledge:'+p for p in expected}
     assert auth['baseScopes']==['knowledge:read']
@@ -126,7 +127,7 @@ def main():
         for name,meta in inventory.items():assert sha(stream.read('datavyx/'+name))==meta['sha256']
         assert json.loads(stream.read('datavyx/mcp.json'))['mcpServers']['datavyx']==connection
     gaps=['Published support and terms pages','Privacy coverage approval',
-        'Verified publisher identity in Portal','Per-application OAuth method/callback/refresh verification',
+        'Verified publisher identity in Portal','OAuth callback/refresh verification (client_secret_post confirmed by application screenshot)',
         'Dedicated reviewer account','Real demo recording and accessible URL','Five positive and three negative cases not run',
         'Portal connection, scans and attestations not performed']
     report={'status':'local_draft_checks_complete_portal_unverified','publisher':'Datavyx, LLC',

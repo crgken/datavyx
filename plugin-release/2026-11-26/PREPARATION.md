@@ -30,13 +30,13 @@
 ## 公开资料核对
 
 - 网站：https://www.datavyx.com/ 已读取并核对用途。首页确实标注Free，Pro/Team尚未开放；不把计划中的导出/团队管理计入本次公开能力。
-- 旧版privacy.html实际GET200且内容已读取，但缺少完整MCP保存/删除/备份披露；本轮补齐静态新版及独立support.html/terms.html，实际部署前不写包URL。
+- 新版privacy.html及独立support.html/terms.html已随官网main=a37ce6ab12379685b2388597f611385c8ea4227c公开；首页和三页全部HTTPS200、正文与该Git提交字节一致，sitemap同样核对通过。对应后端保留任务已先行启用，再发布政策。
 - support@datavyx.com已确认同时处理支持和隐私请求，属于独立Google Workspace邮箱。当前Gmail连接为ken@datavyx.com，不能擅自代操作support邮箱；由该邮箱管理员按明确结案case执行保留流程。
-- supportURL、privacyPolicyURL、termsOfServiceURL需等生产流程启用和三页公开200/正文/hash核验后写入，不把猜测URL或本地草稿标为已发布。
+- supportURL=https://www.datavyx.com/support.html、privacyPolicyURL=https://www.datavyx.com/privacy.html、termsOfServiceURL=https://www.datavyx.com/terms.html已在上述核验后写入plugin.json。
 
-发布者已确认期限并授权实施：正常知识/历史与可恢复删除随账号存续保留；核验关闭后30天活动数据处理、备份30天轮转（通常核验起最长60天退出备份）；最小技术日志30天、必要支持工单结案后12日历月。实施与核验见docs/50-运行记录/Datavyx保留流程开发进度-2026-11-26.md。policy-drafts/是历史提案；当前采用的静态源在website/及官网独立Git仓库中。方案确认不等于生产启用，不提前发布保留期限承诺。
+发布者已确认期限并授权实施：正常知识/历史与可恢复删除随账号存续保留；核验关闭后30天活动数据处理、备份30天轮转（通常核验起最长60天退出备份）；最小技术日志30天、必要支持工单结案后12日历月。正式/候选现运行3c37571，首轮每日任务、三个profile真实恢复、到期备份/日志检查通过；196项回归通过，没有关闭真实账号。实施与核验见docs/50-运行记录/Datavyx保留流程开发进度-2026-11-26.md。policy-drafts/是历史提案，现行静态源已按官网Git流程公开。
 
-本地检查已生成datavyx-1.0.0-public-DRAFT.zip（仅3个包文件，图标789×789、457145字节、与原文件hash相同），五正三负用例尚未运行。官网及privacy.html实际GET均200且内容已读取；隐私条款的公开MCP覆盖仍不完整。完整通用mcp.schema.json当前不接受OpenAI文档规定的server.extensions字段：主manifest和去除vendor扩展后的通用投影通过，OpenAI配置单独按文档字段检查；没有把通用投影通过伪称为完整schema/Portal导入通过。最终需目标平台导入核验，当前包不是可提交成品。
+本地检查已重新生成datavyx-1.0.0-public-DRAFT.zip，SHA256=c481d997ae2c354a142181009dba7f62347f88a0815e044132a06db83245628a（仅3个包文件，图标789×789、457145字节、与原文件hash相同），四个公开页面校验通过；包无Secret/令牌/账号绑定。五正三负用例尚未运行。完整通用mcp.schema.json当前不接受OpenAI文档规定的server.extensions字段：主manifest和去除vendor扩展后的通用投影通过，OpenAI配置单独按文档字段检查；没有把通用投影通过伪称为完整schema/Portal导入通过。最终需目标平台导入核验，当前包不是可提交成品。
 
 ## 验收和发布门槛
 

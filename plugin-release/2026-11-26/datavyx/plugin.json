@@ -20,6 +20,9 @@
           "Summarize recorded expenses by category and calculate the total."
         ],
         "websiteURL": "https://www.datavyx.com/",
+        "supportURL": "https://www.datavyx.com/support.html",
+        "privacyPolicyURL": "https://www.datavyx.com/privacy.html",
+        "termsOfServiceURL": "https://www.datavyx.com/terms.html",
         "logo": "./assets/datavyx-logo.png",
         "composerIcon": "./assets/datavyx-logo.png"
       },

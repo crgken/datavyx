@@ -4,6 +4,7 @@ from html.parser import HTMLParser
 import json
 from pathlib import Path
 import struct
+import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -102,18 +103,29 @@ def main():
         assert set(case['tools_triggered'].split(', '))<=set(catalog)
     save_json(verification/'source-tool-catalog.json',catalog)
     pages={}
-    for name,url in (('website','https://www.datavyx.com/'),('privacy','https://www.datavyx.com/privacy.html')):
+    website_commit='a37ce6ab12379685b2388597f611385c8ea4227c'
+    public_files={'website':('websiteURL','index.html'), 'support':('supportURL','support.html'),
+        'privacy':('privacyPolicyURL','privacy.html'), 'terms':('termsOfServiceURL','terms.html')}
+    for name,(field,filename) in public_files.items():
+        url=interface[field]
+        assert url=='https://www.datavyx.com/'+('' if name=='website' else filename)
         try:
             status,final,content,raw=fetch(url)
             parser=Page();parser.feed(raw.decode('utf-8'))
             text='\n'.join(parser.parts)
             assert 'Datavyx' in text
+            expected_page=subprocess.check_output(['git','show',website_commit+':'+filename],
+                cwd=PROJECT/'tmp/datavyx-landing-submit')
+            assert raw==expected_page,'Public page differs from the verified website commit'
+            if name!='website':assert 'support@datavyx.com' in text
             folder=verification/'public-pages';folder.mkdir(exist_ok=True)
             (folder/f'{name}.txt').write_text(text,encoding='utf-8')
             pages[name]={'status':status,'final_url':final,'content_type':content,'sha256':sha(raw),
-                'content_read':True,'public_submission_coverage_complete':name=='website'}
+                'content_read':True,'matches_website_commit':website_commit}
         except Exception as error:
             pages[name]={'url':url,'verified':False,'error_type':type(error).__name__}
+    assert all(row.get('status')==200 and row.get('matches_website_commit')==website_commit
+        for row in pages.values()),'All four published pages must pass before packaging'
     inventory={str(path.relative_to(PACKAGE)).replace('\\','/'):{'sha256':sha(path.read_bytes()),'bytes':path.stat().st_size}
         for path in PACKAGE.rglob('*') if path.is_file()}
     assert set(inventory)=={'plugin.json','mcp.json','assets/datavyx-logo.png'}
@@ -126,8 +138,7 @@ def main():
         assert stream.testzip() is None
         for name,meta in inventory.items():assert sha(stream.read('datavyx/'+name))==meta['sha256']
         assert json.loads(stream.read('datavyx/mcp.json'))['mcpServers']['datavyx']==connection
-    gaps=['Published support and terms pages','Privacy coverage approval',
-        'Verified publisher identity in Portal','OAuth callback/refresh verification (client_secret_post confirmed by application screenshot)',
+    gaps=['Verified publisher identity in Portal','OAuth callback/refresh verification (client_secret_post confirmed by application screenshot)',
         'Dedicated reviewer account','Real demo recording and accessible URL','Five positive and three negative cases not run',
         'Portal connection, scans and attestations not performed']
     report={'status':'local_draft_checks_complete_portal_unverified','publisher':'Datavyx, LLC',

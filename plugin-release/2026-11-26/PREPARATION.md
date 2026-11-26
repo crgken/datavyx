@@ -24,7 +24,7 @@
 
 1. 发布者2026-11-26提供应用Credentials截图，Client Authentication Methods明确选中Client Secret (Post)；当前包已写client.tokenEndpointAuthMethod=client_secret_post。截图Secret保持遮挡，未读取、复制或写入包。应用实际方法与provider全局方法是不同证据，本次以该应用截图核验。
 2. 复用的应用必须对正式/mcp API具备七项User-Delegated授权。实际callback从本次Portal管理页精确复制；仅在确有新地址时追加，不覆盖已有callback，也不配置通配符。
-3. offline_access已被issuer发现文档声明；API Allow Offline Access、该应用Refresh Token grant与实际刷新寿命尚未核验。包声明不等于刷新已生效，不承诺用户永不重连。
+3. 发布者2026-11-26只读核验正式/mcp API：Maximum Access Token Lifetime=86400秒（最大24小时），Allow Offline Access=关闭；目前未具备已验证的refresh-token自动续期配置。不能把issuer全局声明offline_access当作这一个API已允许刷新。应用Refresh Token grant、rotation、闲置/最长寿命及实际客户端行为仍需核验；本轮没有修改这些认证设置，不承诺用户永不重连。
 4. fixed-client开发验收、演示及最终Portal连接/扫描是不同阶段。先恢复一个使用既有客户端的开发连接，不需要新增DCR应用；每位外部用户不应再各自创建DCR连接。
 
 ## 公开资料核对

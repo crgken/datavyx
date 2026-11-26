@@ -19,7 +19,7 @@
               "knowledge:delete", "knowledge:restore", "knowledge:history", "knowledge:bulk"
             ],
             "oidcEnabled": true,
-            "oidcScopesSupported": ["openid", "profile", "email", "offline_access"]
+            "oidcScopesSupported": ["openid", "profile", "email"]
           }
         }
       }

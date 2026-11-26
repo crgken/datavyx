@@ -253,6 +253,13 @@ def create_app(settings, repository=None, authentication=None):
     @asynccontextmanager
     async def lifetime(app):
         try:
+            # Refuse to open the data plane after a stale restore, even if an operator
+            # starts the service before polling /health/ready.
+            def recovery_barriers(tx):
+                PurgeLedger(repo.settings).check(tx)
+                from .account_state import AccountState
+                AccountState(repo.settings).check_restore(tx)
+            await anyio.to_thread.run_sync(lambda:repo.transaction(recovery_barriers))
             async with lifespan(app): yield
         finally:
             if repository is None: repo.close()

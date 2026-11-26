@@ -127,6 +127,30 @@ class HTTPProtocolTests(unittest.TestCase):
                 finally:
                     self.repo.transaction(lambda tx:tx.run('MATCH (c:KDMCPAccountClosure {id:$a}) DELETE c',a=self.identity.actor).consume())
 
+    def test_stale_account_restore_refuses_asgi_startup_before_serving_any_tools(self):
+        from mcp_backend.account_state import AccountState
+        from mcp_backend.account_close import AccountClose
+        from mcp_backend.errors import KnowledgeError
+        from mcp_backend.migrations.snapshot import export_snapshot,restore_test_snapshot
+        parent=Path(__file__).resolve().parents[2]/'.mcp-artifacts';parent.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=parent) as temporary:
+            root=Path(temporary).resolve();assert root.is_relative_to(parent.resolve());(root/'purge').mkdir()
+            settings=replace(self.settings,purge_ledger_dir=str(root/'purge'),purge_ledger_secret='synthetic-ledger-key-'*3)
+            AccountState.initialize(settings)
+            with patch.object(self.repo,'settings',settings):
+                snapshot=export_snapshot(self.repo,self.scope.dataset)
+                close=AccountClose(self.repo)
+                try:
+                    close.block(self.identity.actor,'synthetic-verified-close',legacy_personal=[self.scope.workspace_id])
+                    close.erase(self.identity.actor);restore_test_snapshot(self.repo,snapshot)
+                    app=create_app(settings,self.repo,self.auth)
+                    async def start():
+                        async with app.router.lifespan_context(app):self.fail('Stale restore was allowed to serve.')
+                    with self.assertRaises(KnowledgeError) as error:asyncio.run(start())
+                    self.assertEqual(error.exception.code,'RECOVERY_REQUIRED')
+                finally:
+                    self.repo.transaction(lambda tx:tx.run('MATCH (c:KDMCPAccountClosure {id:$a}) DELETE c',a=self.identity.actor).consume())
+
     def test_self_service_new_clients_provision_and_isolate_over_http(self):
         tokens=[self.token(sub='auth0|mcp-test-'+uuid4().hex,azp='new-client-'+uuid4().hex)
                 for _ in range(2)]

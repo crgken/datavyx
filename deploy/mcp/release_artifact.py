@@ -16,6 +16,10 @@ REQUIRED = {'knowledge-management-demo/mcp_backend/server.py',
             'knowledge-management-demo/mcp_backend/mutations.py',
             'knowledge-management-demo/mcp_backend/purge_ledger.py',
             'knowledge-management-demo/mcp_backend/erasure.py',
+            'knowledge-management-demo/mcp_backend/account_state.py',
+            'knowledge-management-demo/mcp_backend/account_close.py',
+            'knowledge-management-demo/mcp_backend/retention.py',
+            'knowledge-management-demo/mcp_backend/retention_backup.py',
             'knowledge-management-demo/requirements-mcp.lock.txt'}
 
 
@@ -31,7 +35,7 @@ def allowed(name):
         return p.suffix == '.py'
     if name.startswith('deploy/mcp/') and len(p.parts) == 3:
         return (p.suffix in {'.py', '.sh', '.service', '.conf', '.html'}
-                or p.name.endswith('.env.example') or p.name == 'README.md')
+                or p.suffix=='.timer' or p.name.endswith('.env.example') or p.name == 'README.md')
     return False
 
 
@@ -42,16 +46,20 @@ def git(root, *args):
     return subprocess.check_output(['git', '-C', str(root), *args], stderr=subprocess.PIPE)
 
 
-def build(root, remote_ref, output):
+def build(root, remote_ref, output,allow_unrelated_dirty=False):
     commit = git(root, 'rev-parse', 'HEAD').decode().strip()
     if git(root, 'status', '--porcelain').strip():
-        raise ValueError('The workspace must be clean before locking an artifact.')
+        if not allow_unrelated_dirty:raise ValueError('The workspace must be clean before locking an artifact.')
+        changed=git(root,'diff','HEAD','--name-only','-z').decode('utf-8').split('\0')
+        untracked=git(root,'ls-files','--others','--exclude-standard','-z').decode('utf-8').split('\0')
+        if any(allowed(name) for name in changed+untracked if name):
+            raise ValueError('Runtime changes must be committed; only unrelated local files may remain dirty.')
     if not remote_ref.startswith('origin/') or git(root, 'rev-parse', remote_ref).decode().strip() != commit:
         raise ValueError('The candidate must match its already-pushed origin ref.')
     names = git(root, 'ls-tree', '-r', '--name-only', commit).decode('utf-8').splitlines()
     files = {name: git(root, 'show', f'{commit}:{name}') for name in sorted(names) if allowed(name)}
     if not REQUIRED <= files.keys(): raise ValueError('The commit is missing required MCP files.')
-    manifest = {'format': 1, 'data_contract':2, 'permanent_erasure':False, 'commit': commit, 'runtime': 'python3.12',
+    manifest = {'format': 1, 'data_contract':3, 'account_closure':1, 'permanent_erasure':False, 'commit': commit, 'runtime': 'python3.12',
         'files': {name: {'sha256': sha(value), 'size': len(value)} for name, value in files.items()}}
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -75,7 +83,7 @@ def verify(archive_path, expected_sha, expected_commit):
             raise ValueError('Duplicate, linked or oversized archive members are forbidden.')
         if 'MCP-MANIFEST.json' not in names: raise ValueError('Manifest missing.')
         manifest = json.load(archive.extractfile('MCP-MANIFEST.json'))
-        if manifest.get('format') != 1 or manifest.get('data_contract') != 2 or manifest.get('commit') != expected_commit or manifest.get('runtime') != 'python3.12':
+        if manifest.get('format') != 1 or manifest.get('data_contract') != 3 or manifest.get('account_closure') != 1 or manifest.get('commit') != expected_commit or manifest.get('runtime') != 'python3.12':
             raise ValueError('Manifest version or commit mismatch.')
         if manifest.get('permanent_erasure') is not False:
             raise ValueError('This release must not reopen permanent erasure, including during recovery.')
@@ -140,6 +148,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     subs = parser.add_subparsers(dest='operation', required=True)
     pack = subs.add_parser('build'); pack.add_argument('--root', default='.'); pack.add_argument('--remote-ref', required=True); pack.add_argument('--output', required=True)
+    pack.add_argument('--allow-unrelated-dirty',action='store_true',help='Preserve unrelated user edits; all runtime paths must still match the pushed commit.')
     for name in ('verify', 'extract'):
         command = subs.add_parser(name); command.add_argument('archive'); command.add_argument('--sha256', required=True); command.add_argument('--commit', required=True)
         if name == 'extract': command.add_argument('--target', required=True)
@@ -149,7 +158,7 @@ def main():
     compare.add_argument('--archive',required=True);compare.add_argument('--sha256',required=True);compare.add_argument('--commit',required=True)
     args = parser.parse_args()
     try:
-        if args.operation == 'build': result = build(args.root, args.remote_ref, args.output)
+        if args.operation == 'build': result = build(args.root, args.remote_ref, args.output,args.allow_unrelated_dirty)
         elif args.operation == 'installed': result = verify_installed(args.target, args.commit, args.archive, args.sha256)
         elif args.operation == 'compare':result=compare_git(args.root,args.ref,args.archive,args.sha256,args.commit)
         elif args.operation == 'extract': result = extract(args.archive, args.sha256, args.commit, args.target)

@@ -27,10 +27,10 @@ class ReleaseTests(unittest.TestCase):
             self.assertTrue(path.is_relative_to(parent))  # Verified before automatic recursive cleanup.
             yield path
 
-    def archive(self, folder, extra=None, bad_hash=False, duplicate=False, link=False,data_contract=2,permanent_erasure=False):
+    def archive(self, folder, extra=None, bad_hash=False, duplicate=False, link=False,data_contract=3,permanent_erasure=False):
         files = {name: b'pass\n' for name in release.REQUIRED}
         if extra: files[extra] = b'forbidden'
-        manifest = {'format': 1, 'data_contract':data_contract,'commit': 'a'*40, 'runtime': 'python3.12',
+        manifest = {'format': 1, 'data_contract':data_contract,'account_closure':1,'commit': 'a'*40, 'runtime': 'python3.12',
             'files': {n: {'sha256': release.sha(v), 'size': len(v)} for n, v in files.items()}}
         if permanent_erasure is not None:manifest['permanent_erasure']=permanent_erasure
         if bad_hash: manifest['files'][next(iter(files))]['sha256'] = '0'*64
@@ -89,9 +89,10 @@ class ReleaseTests(unittest.TestCase):
             with self.assertRaises(ValueError): run_env.read_env(path)
 
     def test_append_only_candidate_cannot_be_a_lifecycle_rollback_target(self):
-        with self.directory() as folder:
-            path,checksum=self.archive(folder,data_contract=1)
-            with self.assertRaises(ValueError):release.verify(path,checksum,'a'*40)
+        for version in (1,2):
+            with self.subTest(version=version),self.directory() as folder:
+                path,checksum=self.archive(folder,data_contract=version)
+                with self.assertRaises(ValueError):release.verify(path,checksum,'a'*40)
 
     def test_rollback_cannot_reopen_permanent_erasure_or_assume_an_old_manifest_disables_it(self):
         for flag in (None,True,'false',0):
@@ -109,6 +110,28 @@ class ReleaseTests(unittest.TestCase):
                 command=run.call_args.args[0];env=run.call_args.kwargs['env']
                 self.assertIsInstance(command,list);self.assertIn(argv[-1],command)
                 self.assertNotIn('LLM_API_KEY',env);self.assertFalse(run.call_args.kwargs.get('shell',False))
+
+    def test_artifact_never_packages_dirty_runtime_while_preserving_unrelated_user_edits(self):
+        def responses(changed,untracked=b''):
+            def fake(root,*args):
+                if args==('rev-parse','HEAD') or args==('rev-parse','origin/retention'):return b'a'*40+b'\n'
+                if args==('status','--porcelain'):return b' M local-change\n'
+                if args==('diff','HEAD','--name-only','-z'):return changed
+                if args==('ls-files','--others','--exclude-standard','-z'):return untracked
+                if args[:2]==('ls-tree','-r'):return '\n'.join(sorted(release.REQUIRED)).encode()
+                if args[0]=='show':return b'pass\n'
+                raise AssertionError(args)
+            return fake
+        with self.directory() as folder:
+            with patch.object(release,'git',side_effect=responses(b'docs/local-note.md\0.gitignore\0')):
+                with self.assertRaises(ValueError):release.build(folder,'origin/retention',folder/'strict.tar')
+                result=release.build(folder,'origin/retention',folder/'scoped.tar',allow_unrelated_dirty=True)
+                manifest,_=release.verify(folder/'scoped.tar',result['sha256'],'a'*40)
+                self.assertNotIn('.gitignore',manifest['files']);self.assertEqual(manifest['account_closure'],1)
+            for changed,untracked in [(b'knowledge-management-demo/mcp_backend/server.py\0',b''),
+                (b'docs/notes.md\0',b'deploy/mcp/uncommitted.py\0')]:
+                with patch.object(release,'git',side_effect=responses(changed,untracked)):
+                    with self.assertRaises(ValueError):release.build(folder,'origin/retention',folder/'blocked.tar',allow_unrelated_dirty=True)
 
 
 if __name__ == '__main__': unittest.main()

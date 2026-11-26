@@ -1,4 +1,7 @@
 from dataclasses import replace
+from contextlib import contextmanager
+from pathlib import Path
+import tempfile
 import time
 from uuid import uuid4
 from mcp_backend.settings import Settings
@@ -10,6 +13,20 @@ def test_settings(**updates):
         issuer='https://issuer.example/',audience='https://mcp.example/mcp',clients=('test-client',),
         resource_url='http://127.0.0.1:8098/mcp',cursor_secret='test-only-secret-'*4,mode='test')
     return replace(base,**updates)
+
+
+@contextmanager
+def production_settings(base):
+    """Isolated production-mode maintenance fixture with the required external state."""
+    from mcp_backend.account_state import AccountState
+    parent=Path(__file__).resolve().parents[1]/'.mcp-artifacts';parent.mkdir(exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=parent) as temporary:
+        root=Path(temporary).resolve();assert root.is_relative_to(parent.resolve())
+        (root/'purge').mkdir()
+        settings=replace(base,mode='production',password='unused-test-only',resource_url=base.audience,
+            purge_ledger_dir=str(root/'purge'),purge_ledger_secret='synthetic-ledger-key-'*3)
+        AccountState.initialize(settings)
+        yield settings
 
 
 def workspace(repo,role='owner'):

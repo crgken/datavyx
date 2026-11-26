@@ -56,5 +56,5 @@ if [[ "$previous" == /opt/atlasai-mcp/candidates/* ]] && python3 "$helper" insta
   ln -sfn "$previous" /opt/atlasai-mcp/candidate
   systemctl start atlasai-mcp-candidate.service
 fi
-echo "Candidate health failed; only a lifecycle-v2 compatible candidate may be restored. No production action taken." >&2
+echo "Candidate health failed; only a lifecycle-v3/account-closure compatible candidate may be restored. No production action taken." >&2
 exit 1

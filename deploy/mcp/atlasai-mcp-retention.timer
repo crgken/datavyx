@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Datavyx retention processing
+
+[Timer]
+OnCalendar=*-*-* 02:20:00 UTC
+RandomizedDelaySec=10min
+Persistent=true
+Unit=atlasai-mcp-retention.service
+
+[Install]
+WantedBy=timers.target

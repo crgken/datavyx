@@ -8,10 +8,9 @@ from mcp_backend.ingestion import Ingestion
 from mcp_backend.records import Records
 from mcp_backend.query import Queries
 from mcp_backend.permissions import PERMISSIONS
-from mcp_backend.purge_ledger import PurgeLedger
 from mcp_backend.neo4j_repository import Repository
 from mcp_backend.errors import KnowledgeError
-from tests_mcp.support import test_settings,workspace,cleanup
+from tests_mcp.support import test_settings,workspace,cleanup,production_settings
 from tests_mcp.integration.test_ingestion import sample
 from tests_mcp.integration.test_mutations import instruction
 
@@ -94,9 +93,7 @@ class MutationEdgeTests(unittest.TestCase):
     def test_maintenance_stops_all_new_mutation_writes_but_allows_original_replay(self):
         change=self.correction();body=UpdateInput(**instruction(text='Change amount to 65.'),changes=[change])
         self.service.update_information(self.scope,body)
-        restricted=replace(self.repo.settings,mode='production',password='test-only',resource_url='https://mcp.example/mcp',
-            purge_ledger_dir=str(PurgeLedger(self.repo.settings).root(self.scope.dataset)),purge_ledger_secret=self.repo.settings.cursor_secret)
-        with patch.object(self.repo,'settings',restricted):
+        with production_settings(self.repo.settings) as restricted,patch.object(self.repo,'settings',restricted):
             self.assertTrue(self.service.update_information(self.scope,body)['idempotent'])
             with self.assertRaises(KnowledgeError) as error:self.update(self.correction(version=2),request='blocked-new-write')
             self.assertEqual(error.exception.code,'MAINTENANCE')

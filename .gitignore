@@ -78,3 +78,23 @@ outputs/client-acquisition/collector/
 outputs/client-acquisition/company-lookups/
 atlasai-core/eval/results_*.json
 graphiti-poc/p0/results_*.json
+
+# Confirmed retention implementation and public plugin preparation source.
+!/deploy/mcp/*.timer
+!/docs/40-实施计划/Datavyx账户关闭与保留期限落实计划-2026-11-26.md
+!/docs/50-运行记录/Datavyx保留流程开发进度-2026-11-26.md
+!/docs/50-运行记录/Datavyx保留流程候选发布报告-2026-11-26.md
+!/docs/60-子系统与工具说明/Datavyx账户关闭与保留流程运行手册-2026-11-26.md
+!/plugin-release/
+/plugin-release/*
+!/plugin-release/2026-11-26/
+/plugin-release/2026-11-26/*
+!/plugin-release/2026-11-26/PREPARATION.md
+!/plugin-release/2026-11-26/prepare.py
+!/plugin-release/2026-11-26/datavyx/
+!/plugin-release/2026-11-26/datavyx/plugin.json
+!/plugin-release/2026-11-26/datavyx/mcp.json
+!/plugin-release/2026-11-26/datavyx/assets/
+!/plugin-release/2026-11-26/datavyx/assets/datavyx-logo.png
+!/plugin-release/2026-11-26/review-materials/
+!/plugin-release/2026-11-26/review-materials/REVIEW.md

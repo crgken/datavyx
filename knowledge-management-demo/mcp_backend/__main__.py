@@ -31,11 +31,12 @@ def main():
             from .errors import require
             repo=Repository(settings)
             try:
-                count=repo.transaction(lambda tx:tx.run('MATCH (n) WHERE n:KDMCPRequest OR n:KDMCPChange OR n:KDMCPPurgeLedger '
+                count=repo.transaction(lambda tx:tx.run('MATCH (n) WHERE n:KDMCPRequest OR n:KDMCPChange OR n:KDMCPPurgeLedger OR n:KDMCPAccountClosure '
                     'OR ((n:KDObject OR n:KDFact OR n:KDSource) AND (n.deleted_by IS NOT NULL OR n.superseded_by IS NOT NULL '
                     'OR coalesce(n.source_visibility_barrier,false) OR coalesce(n.version,1)>1)) RETURN count(n) AS n').single()['n'])
                 from .purge_ledger import PurgeLedger
-                require(count==0 and not PurgeLedger(settings).entries(),'ROLLBACK_INCOMPATIBLE',
+                from .account_state import AccountState
+                require(count==0 and not PurgeLedger(settings).entries() and not AccountState(settings).entries(),'ROLLBACK_INCOMPATIBLE',
                     'MCP writes or erasure manifests exist. Use lifecycle-compatible code; do not return to the legacy writer.',409)
             finally:repo.close()
             print(json.dumps({'status':'legacy_rollback_compatible'}));return 0

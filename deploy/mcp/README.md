@@ -1,5 +1,7 @@
 # MCP 候选与正式发布操作边界
 
+2026-11-26保留扩展：新运行包使用data_contract=3/account_closure=1，必须包含account_state/account_close/retention/retention_backup并保留permanent_erasure=false。先用已验证运行包的venv执行新包retention_bootstrap.py，准备外部签名状态，再启动新候选/正式；不能回退到不认识关闭屏障的v2包。新部署含独立管理命令、systemd timer及日志配置，详见`docs/60-子系统与工具说明/Datavyx账户关闭与保留流程运行手册-2026-11-26.md`。该管理流程不增加公开MCP永久清除入口，不构建前端；生产是否启用以运行报告为准。
+
 2026-11-12用户已明确缩小首发范围并授权正式发布：永久清除不开放，保留11工具及read/record/update/delete/restore/history/bulk七scope。历史段落中的12工具/八scope仅指上一候选。永久清除未完成的客户端验收不再作为本次首发门槛；不执行其受阻请求，不更改现有测试数据。内部清单/密钥仍为历史恢复防护所需，保持持久化。
 
 正式准备顺序：先形成并核验最终一致备份、停止旧写入，在正式写入关闭的配置下完成显式schema/兼容迁移，再调用switch-production.sh prepare启动就绪服务，随后activate路由、真实OAuth/最小业务闭环、最后open。不能在schema尚未迁移时先要求prepare通过ready。

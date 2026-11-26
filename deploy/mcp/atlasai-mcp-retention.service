@@ -1,0 +1,17 @@
+[Unit]
+Description=Datavyx verified backup rotation and closed-account reconciliation
+After=docker.service atlasai-mcp.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=root
+EnvironmentFile=/etc/atlasai/retention.env
+ExecStart=/usr/bin/python3 /opt/atlasai-mcp/current/deploy/mcp/retention_runner.py daily
+UMask=0077
+TimeoutStartSec=15min
+Nice=10
+IOSchedulingClass=idle
+LogNamespace=atlasai-mcp
+NoNewPrivileges=true
+PrivateTmp=true

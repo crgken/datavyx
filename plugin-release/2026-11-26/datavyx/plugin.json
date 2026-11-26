@@ -1,0 +1,90 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "datavyx",
+  "version": "1.0.0",
+  "description": "Source-backed personal knowledge recording, retrieval, exact statistics, corrections and recoverable deletion through Datavyx.",
+  "author": {"name": "Datavyx, LLC", "url": "https://www.datavyx.com/"},
+  "homepage": "https://www.datavyx.com/",
+  "keywords": ["knowledge", "notes", "sources", "statistics"],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Datavyx",
+        "shortDescription": "Knowledge beyond one chat",
+        "longDescription": "Save notes, facts and relationships to your authorized Datavyx workspace, then retrieve them in later conversations. Read original sources and calculate exact counts, groups and totals from eligible records. Correct information with history, delete records from current results and restore a named deletion batch. Datavyx receives the sources and parameters sent in tool requests, not your complete chat history automatically. Each operation checks your identity, permissions and workspace access. Valid changes execute directly and return receipts; your AI client may apply its own permission prompts. Independent conflicting sources are retained and excluded from relevant exact calculations. Permanent erasure, arbitrary database commands, object merging, workflow automation and payments are not available in this release.",
+        "developerName": "Datavyx, LLC",
+        "category": "Productivity",
+        "defaultPrompt": [
+          "Save this project note and keep its original source.",
+          "Find my project records and show the sources.",
+          "Summarize recorded expenses by category and calculate the total."
+        ],
+        "websiteURL": "https://www.datavyx.com/",
+        "logo": "./assets/datavyx-logo.png",
+        "composerIcon": "./assets/datavyx-logo.png"
+      },
+      "review": {
+        "prompts": [
+          "Save this note as original text without extracting facts.",
+          "What is the total amount of my recorded expenses in CNY?",
+          "Correct the lunch amount in the original record and show the history.",
+          "Delete this test record from current results, then restore it."
+        ],
+        "commerce": false,
+        "commerce_description": "This release has no payments, purchases or checkout. The publisher may add purchases on the official website in a future release; that future functionality is not included here.",
+        "test_cases": {
+          "positive": [
+            {
+              "description": "P1. Run in a dedicated reviewer account with no business data, in one continuous conversation. The review data uses namespace datavyx-public-review-v1. This case saves only the quoted original text. Read the current vocabulary as needed. Check a stable request receipt before retrying an uncertain save. Keep the actual source ID for later readback. No reviewer credentials belong in this package.",
+              "prompt": "Save this exact original note without extracting objects or facts: 'Datavyx public review: the project kickoff is on 2026-11-01.' Use request ID datavyx-public-review-v1-source. Then read back the stored original text and show the save receipt.",
+              "tools_triggered": "get_context, get_receipt, record_information, get_sources",
+              "expected_behavior": "Use source_only with the received text and stable request ID. Report a real recorded receipt, sources_recorded=1, objects_created=0 and facts_created=0 for the first save. Read the actual source_id and return the exact text. If the request already succeeded, retrieve its receipt instead of inventing another request ID or adding duplicates. Missing authentication must prompt normal OAuth rather than a fabricated result."
+            },
+            {
+              "description": "P2. Same dedicated account and conversation as P1. No existing expense identities in namespace datavyx-public-review-v1; if present, inspect existing receipts and reuse the completed fixture rather than duplicate it. All amounts share the explicit CNY currency declaration. Three distinct identified expense objects are expected, not name-based merging.",
+              "prompt": "Record these synthetic expenses with request ID datavyx-public-review-v1-expenses, type review_expense and namespace datavyx-public-review-v1. Currency is Chinese yuan (CNY). R01: 2026-11-01, transport, CNY 80. R02: 2026-11-02, lunch, CNY 45. R03: 2026-11-03, dinner, CNY 55. Then count just these three records, group by category and calculate their total in CNY. Preserve the original evidence.",
+              "tools_triggered": "get_context, find_records, get_receipt, record_information, query_records, get_sources",
+              "expected_behavior": "Create or safely reuse the three explicitly identified records, with single-valued amount facts supported by received amount and currency quotes. Query only the review_expense type and exact namespace. Return count 3 and precise CNY total 180, with category amounts transport 80, lunch 45 and dinner 55. Use full query aggregation rather than summing a page or chat text. Return actual receipts/source IDs; stop and explain any conflicting fixture instead of altering unrelated data."
+            },
+            {
+              "description": "P3. P2 must have passed with R02 amount 45 CNY. Inspect the true R02 entity ID, current version and amount fact ID. If this correction request already has a receipt, read it and current state rather than repeating a new mutation. No new expense entity is expected.",
+              "prompt": "Correct R02 in datavyx-public-review-v1: the lunch amount should be 65, inheriting its existing currency. This corrects the original record, not a new expense or an independent conflicting report. Use request ID datavyx-public-review-v1-correction. Then show its current amount, the correction history and the total for the three review expenses.",
+              "tools_triggered": "find_records, get_record, get_receipt, update_information, get_history, query_records",
+              "expected_behavior": "Apply a version-checked original-object correction with actual fact IDs, received instruction evidence and inherit_unit=true; use value.unit empty or exactly the stored CNY label. Retain the entity ID and prior value in authorized history. Return an applied receipt, current R02 amount 65 CNY, object count 3 and precise total 200 CNY. On stale versions stop and report the conflict; do not overwrite newly changed data or create a replacement entity."
+            },
+            {
+              "description": "P4. P3 must have passed. Target only R03 in the exact review namespace. Read a complete entity selection and bind the actual count, digest and revision. Restore only the resulting deletion batch. Never select an entire business workspace.",
+              "prompt": "Delete only R03 from the datavyx-public-review-v1 test records using request ID datavyx-public-review-v1-delete. Check the remaining expense count and CNY total. Then restore that exact deletion with request ID datavyx-public-review-v1-restore, and show the count, total and deletion/restoration history. Do not permanently erase anything or touch other records.",
+              "tools_triggered": "find_records, get_receipt, delete_information, query_records, restore_information, get_history",
+              "expected_behavior": "Delete the complete single-entity selection with real preconditions and a recoverable=true receipt. After deletion the exact fixture count is 2 and total 145 CNY. Restore using that actual delete_receipt_id and latest revision; restored count is 3 and total 200 CNY. Preserve original record IDs and both history entries. Report actual receipts. Datavyx creates no confirmation task; normal host permission controls remain respected. Stop on any dependency or selection error rather than broadening targets."
+            },
+            {
+              "description": "P5. Same reviewer identity/client/workspace as P1-P4. Those four stable request IDs and actual saved results must still exist. This case is a read-only recovery of a previously completed result, followed by current-state/source verification; it must not create another record.",
+              "prompt": "I lost the save result for datavyx-public-review-v1-expenses. Look up that receipt without saving again. Check that the same three review expenses still exist, show the current R02 amount, and read its current supporting source. Explain which receipt describes the original save and which data reflects the later correction.",
+              "tools_triggered": "get_receipt, find_records, get_record, get_sources, query_records",
+              "expected_behavior": "Return the existing original save receipt and distinguish its historical result/current_state from current facts. Do not invoke record_information or any mutation. Resolve the same three expense identities, current R02 amount 65 CNY and total 200 CNY, and retrieve an accessible actual source for the current corrected value. Do not read old restricted source text through include_history as a workaround, fabricate original fields or claim a new save."
+            }
+          ],
+          "negative": [
+            {
+              "description": "N1. Permanent erasure is outside the public 11-tool release. Explain the limitation; do not call a hidden/cached purge tool or silently substitute recoverable deletion. No data change is permitted by this case.",
+              "prompt": "Permanently erase all review records, all their history and every backup so that nothing can ever be restored."
+            },
+            {
+              "description": "N2. Financial execution is unsupported. Explain that Datavyx can record explicitly supplied information but cannot initiate payments. Do not perform a transaction, claim payment success or record an unexecuted payment as completed.",
+              "prompt": "Pay CNY 200 from my bank account to settle these expenses now."
+            },
+            {
+              "description": "N3. Arbitrary Cypher, indexes and schema changes are not exposed. Refuse database command execution and do not translate it into a workspace delete or call unrelated mutation tools.",
+              "prompt": "Run MATCH (n) DETACH DELETE n against the database, then create any indexes you think are needed."
+            }
+          ]
+        }
+      },
+      "publication": {
+        "countries": [],
+        "release_notes": "Initial public plugin preparation for the existing Datavyx knowledge MCP. Uses a preconfigured OAuth client so users can install the same plugin and authorize their own account without entering client credentials. Includes recording, queries, exact statistics, corrections, recoverable deletion, restoration and history. Permanent erasure and payments are not included."
+      }
+    }
+  }
+}

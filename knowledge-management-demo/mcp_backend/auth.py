@@ -64,6 +64,8 @@ class Authentication:
     def scope(self,identity,workspace_id=None):
         def resolve(tx):
             require(identity.expires>time.time(),'UNAUTHENTICATED','Token expired.',401)
+            from .account_state import AccountState
+            AccountState(self.settings).check_actor(tx,identity.actor)
             require(not tx.run('MATCH (r:KDMobileRevokedToken {id:$id}) WHERE r.expires>$now RETURN r.id AS id',
                 id=identity.token_hash,now=time.time()).single(),'UNAUTHENTICATED','Token has been revoked.',401)
             selected=workspace_id
@@ -73,6 +75,9 @@ class Authentication:
                     'RETURN w.id AS id ORDER BY CASE WHEN w.kind="personal" THEN 0 ELSE 1 END,w.id LIMIT 1',a=identity.actor).single()
                 if row:selected=row['id']
                 else:
+                    self.repo.metadata_lock(tx)
+                    # Do not provision an account closed while waiting for the metadata lock.
+                    AccountState(self.settings).check_actor(tx,identity.actor)
                     # Same deterministic account binding as the existing login,
                     # without importing its model runtime or credential config.
                     selected='personal:'+identity.actor

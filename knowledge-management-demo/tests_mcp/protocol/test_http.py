@@ -2,6 +2,8 @@ import asyncio
 from contextlib import AsyncExitStack
 from dataclasses import replace
 import json
+from pathlib import Path
+import tempfile
 import socket
 import threading
 import time
@@ -98,6 +100,32 @@ class HTTPProtocolTests(unittest.TestCase):
         self.assertEqual(metadata['resource'], self.settings.resource_url)
         self.assertEqual(metadata['authorization_servers'], [self.settings.issuer])
         self.assertEqual(set(metadata['scopes_supported']), {'knowledge:'+p for p in PUBLIC_PERMISSIONS})
+
+    def test_closed_account_existing_and_new_signed_tokens_cannot_call_tools(self):
+        from mcp_backend.account_state import AccountState
+        from mcp_backend.account_close import AccountClose
+        parent=Path(__file__).resolve().parents[2]/'.mcp-artifacts';parent.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=parent) as temporary:
+            root=Path(temporary).resolve();assert root.is_relative_to(parent.resolve());(root/'purge').mkdir()
+            settings=replace(self.settings,purge_ledger_dir=str(root/'purge'),purge_ledger_secret='synthetic-ledger-key-'*3)
+            AccountState.initialize(settings)
+            with patch.object(self.repo,'settings',settings),patch.object(self.auth,'settings',settings):
+                async def run():
+                    async with Client(AuthenticatedTransport(settings.resource_url,self.token()),cache=None) as client:
+                        before=await client.call_tool('get_context',{'workspace_id':self.scope.workspace_id})
+                        self.assertFalse(before.is_error)
+                        close=AccountClose(self.repo)
+                        close.block(self.identity.actor,'synthetic-verified-close',legacy_personal=[self.scope.workspace_id])
+                        denied=await client.call_tool('get_context',{'workspace_id':self.scope.workspace_id})
+                        self.assertTrue(denied.is_error)
+                        self.assertEqual(denied.structured_content['error']['code'],'ACCOUNT_CLOSED')
+                    async with Client(AuthenticatedTransport(settings.resource_url,self.token(iat=int(time.time()))),cache=None) as again:
+                        denied=await again.call_tool('get_context',{'workspace_id':self.scope.workspace_id})
+                        self.assertTrue(denied.is_error)
+                        self.assertEqual(denied.structured_content['error']['code'],'ACCOUNT_CLOSED')
+                try:asyncio.run(run())
+                finally:
+                    self.repo.transaction(lambda tx:tx.run('MATCH (c:KDMCPAccountClosure {id:$a}) DELETE c',a=self.identity.actor).consume())
 
     def test_self_service_new_clients_provision_and_isolate_over_http(self):
         tokens=[self.token(sub='auth0|mcp-test-'+uuid4().hex,azp='new-client-'+uuid4().hex)

@@ -224,6 +224,8 @@ def create_app(settings, repository=None, authentication=None):
             def readiness(tx):
                 row=tx.run("MATCH (s:KDMCPSchema {id:'core',version:1,lifecycle_version:2}) RETURN s.version AS version").single()
                 PurgeLedger(repo.settings).check(tx)
+                from .account_state import AccountState
+                AccountState(repo.settings).check_restore(tx)
                 return row
             row = await anyio.to_thread.run_sync(lambda: repo.transaction(readiness))
             require(row, 'MIGRATION_REQUIRED', 'The database schema is not ready.', 503)

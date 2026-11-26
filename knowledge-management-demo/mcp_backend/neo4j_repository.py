@@ -42,7 +42,7 @@ class Repository:
     def migrate(self):
         # DDL is explicit, never run while importing a package or on tool calls.
         with self.driver.session(database=self.settings.database) as session:
-            for label in ('KDObject','KDFact','KDSource','KDData','KDWorkspace','KDWorkspaceMember','KDMCPRequest','KDMCPPredicate','KDMCPMigration','KDMCPSchema','KDMCPChange','KDMCPPurgeLedger'):
+            for label in ('KDObject','KDFact','KDSource','KDData','KDWorkspace','KDWorkspaceMember','KDMCPRequest','KDMCPPredicate','KDMCPMigration','KDMCPSchema','KDMCPChange','KDMCPPurgeLedger','KDMCPAccountClosure','KDMCPMaintenance'):
                 session.run(f'CREATE CONSTRAINT mcp_{label.lower()}_id IF NOT EXISTS FOR (n:{label}) REQUIRE n.id IS UNIQUE').consume()
             session.run('CREATE CONSTRAINT mcp_object_identity IF NOT EXISTS FOR (o:KDObject) REQUIRE (o.dataset,o.identity_key) IS UNIQUE').consume()
             session.run('CREATE INDEX mcp_fact_subject IF NOT EXISTS FOR (f:KDFact) ON (f.dataset,f.subject_id,f.predicate)').consume()
@@ -50,8 +50,13 @@ class Repository:
             session.run("MERGE (s:KDMCPSchema {id:'core'}) SET s.version=1,s.lifecycle_version=2").consume()
 
     @staticmethod
-    def authorize(tx,scope,permission='read'):
+    def metadata_lock(tx):
+        tx.run('MERGE (m:KDMCPMaintenance {id:"metadata"}) SET m.lock=true').consume()
+
+    def authorize(self,tx,scope,permission='read'):
         require(scope.expires>time.time(),'UNAUTHENTICATED','Authentication expired.',401)
+        from .account_state import AccountState
+        AccountState(self.settings).check_actor(tx,scope.actor)
         require(permission in scope.permissions,'PERMISSION_DENIED','The token does not grant this operation.',403,
                 required_scope='knowledge:'+permission)
         row=tx.run('MATCH (m:KDWorkspaceMember {workspace_id:$w,actor:$a,enabled:true}) '

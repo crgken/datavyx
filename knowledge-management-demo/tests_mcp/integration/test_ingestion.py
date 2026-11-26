@@ -7,7 +7,7 @@ from mcp_backend.contracts import RecordInput, ReceiptInput, TOOL_OUTPUTS
 from mcp_backend.errors import KnowledgeError
 from mcp_backend.ingestion import Ingestion
 from mcp_backend.neo4j_repository import Repository
-from tests_mcp.support import test_settings, workspace, cleanup
+from tests_mcp.support import test_settings, workspace, cleanup,production_settings
 
 
 def sample(request_id='test-request-001', identifier='001'):
@@ -144,20 +144,17 @@ class IngestionTests(unittest.TestCase):
         self.assertEqual(self.nodes(), 0)
 
     def test_production_maintenance_allows_receipts_but_no_new_records(self):
-        from mcp_backend.purge_ledger import PurgeLedger
-        restricted = replace(self.repo.settings, mode='production', password='unused-test-only',
-                             resource_url='https://mcp.example/mcp',purge_ledger_dir=str(PurgeLedger(self.repo.settings).root(self.scope.dataset)),
-                             purge_ledger_secret=self.repo.settings.cursor_secret)
-        with patch.object(self.repo, 'settings', restricted):
-            with self.assertRaises(KnowledgeError) as blocked: self.save(sample())
-            self.assertEqual(blocked.exception.code, 'MAINTENANCE'); self.assertEqual(self.nodes(), 0)
-        with patch.object(self.repo, 'settings', replace(restricted, recording_actors=(self.scope.actor,))):
-            first = self.save(sample())
-        with patch.object(self.repo, 'settings', restricted):
-            replay = self.save(sample()); self.assertTrue(replay['idempotent'])
-            recovered = self.service.get_receipt(self.scope, ReceiptInput(request_id='test-request-001'))
-            self.assertEqual(recovered['receipt']['receipt_id'], first['receipt_id'])
-            with self.assertRaises(KnowledgeError): self.save(self.reference(first))
+        with production_settings(self.repo.settings) as restricted:
+            with patch.object(self.repo, 'settings', restricted):
+                with self.assertRaises(KnowledgeError) as blocked: self.save(sample())
+                self.assertEqual(blocked.exception.code, 'MAINTENANCE'); self.assertEqual(self.nodes(), 0)
+            with patch.object(self.repo, 'settings', replace(restricted, recording_actors=(self.scope.actor,))):
+                first = self.save(sample())
+            with patch.object(self.repo, 'settings', restricted):
+                replay = self.save(sample()); self.assertTrue(replay['idempotent'])
+                recovered = self.service.get_receipt(self.scope, ReceiptInput(request_id='test-request-001'))
+                self.assertEqual(recovered['receipt']['receipt_id'], first['receipt_id'])
+                with self.assertRaises(KnowledgeError): self.save(self.reference(first))
         self.assertEqual(self.nodes(), 4)
 
 

@@ -8,6 +8,19 @@ from uuid import uuid4
 from mcp_backend.errors import require,KnowledgeError
 from mcp_backend.neo4j_repository import Repository
 from mcp_backend.retention_backup import read_backup,restore_isolated
+from neo4j.exceptions import Neo4jError,ServiceUnavailable,SessionExpired
+
+
+def wait_for_database(repo,attempts=45):
+    for attempt in range(attempts):
+        try:
+            repo.driver.verify_connectivity()
+            # DBMS Bolt readiness precedes the target database's online transition.
+            with repo.driver.session(database=repo.settings.database) as session:session.run('RETURN 1').consume()
+            return
+        except (Neo4jError,ServiceUnavailable,SessionExpired,OSError):
+            if attempt==attempts-1:raise KnowledgeError('VERIFICATION_UNAVAILABLE','Temporary restore database did not become ready.',503) from None
+            time.sleep(1)
 
 
 def verify_backup(store,name,settings):
@@ -34,11 +47,7 @@ def verify_backup(store,name,settings):
         subprocess.run(['docker','start',container],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         isolated=replace(settings,mode='production',uri='bolt://127.0.0.1:17696',password='temporary-verification-only')
         repo=Repository(isolated)
-        for attempt in range(45):
-            try:repo.driver.verify_connectivity();break
-            except Exception:
-                if attempt==44:raise KnowledgeError('VERIFICATION_UNAVAILABLE','Temporary restore database did not become ready.',503) from None
-                time.sleep(1)
+        wait_for_database(repo)
         owned();restore_isolated(repo,snapshot)
         return store.verify_restored(name,repo)
     finally:

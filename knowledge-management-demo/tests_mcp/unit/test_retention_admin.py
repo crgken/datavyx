@@ -3,12 +3,29 @@ from pathlib import Path
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
+from unittest.mock import MagicMock
 from mcp_backend.errors import KnowledgeError
 from scripts.mcp_retention import guard,legacy_not_mounted
 from tests_mcp.support import test_settings
+from scripts.mcp_backup_verify import wait_for_database
+from neo4j.exceptions import ServiceUnavailable
 
 
 class RetentionAdminTests(unittest.TestCase):
+    def test_bolt_connectivity_does_not_replace_target_database_readiness(self):
+        repo=SimpleNamespace(driver=MagicMock(),settings=SimpleNamespace(database='neo4j'))
+        session=repo.driver.session.return_value.__enter__.return_value
+        session.run.side_effect=[ServiceUnavailable('synthetic database is still starting'),MagicMock()]
+        with patch('scripts.mcp_backup_verify.time.sleep'):wait_for_database(repo,attempts=2)
+        self.assertEqual(session.run.call_count,2)
+        self.assertEqual(repo.driver.verify_connectivity.call_count,2)
+
+    def test_database_startup_deadline_is_explicit(self):
+        repo=SimpleNamespace(driver=MagicMock(),settings=SimpleNamespace(database='neo4j'))
+        repo.driver.session.return_value.__enter__.return_value.run.side_effect=ServiceUnavailable('synthetic startup failure')
+        with patch('scripts.mcp_backup_verify.time.sleep'),self.assertRaises(KnowledgeError) as error:wait_for_database(repo,attempts=2)
+        self.assertEqual(error.exception.code,'VERIFICATION_UNAVAILABLE')
+
     def test_management_requires_the_exact_root_authorization(self):
         with patch.dict('os.environ',{'ATLASAI_RETENTION_AUTHORIZED_COMMIT':'b'*40}):
             with self.assertRaises(KnowledgeError) as error:guard(test_settings(),'a'*40)
